@@ -291,8 +291,12 @@ class HolidayObservance:
         self.shift: int = shift
 
     def setHoliday(self, holiday: str):
-        if holiday not in defaults.HOLIDAYS:
-            raise RuntimeError('holiday not in defaults.HOLIDAYS')
+        # Any name, not only defaults.HOLIDAYS: the Defaults tab lets the office
+        # add and rename holidays, and an observance keeps its name after its
+        # holiday is renamed or deleted there. Checking the name here made the
+        # loader refuse the file.
+        if holiday is None:
+            raise RuntimeError('holiday is None')
         self.holiday = holiday
 
     def setDate(self, date: datetime.date, shift: int):

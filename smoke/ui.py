@@ -3783,6 +3783,94 @@ def holidays_tab_defaults_crud() -> list[str]:
     return errors
 
 
+def holiday_observance_custom_name_roundtrip() -> list[str]:
+    """Bugfix (2026-10-21): an observance of a holiday added on the Defaults
+    tab survives save and reload.
+
+    ``HolidayObservance.setHoliday`` used to refuse any name outside
+    ``defaults.HOLIDAYS``, so once a holiday the office added was given an
+    observance, the saved file would no longer open. Through the real windows:
+    creates "Juneteenth" on Defaults, selects its shift 1 observance, renames
+    it to "Juneteenth Day" (the observance keeps the old name, which is then in
+    neither the holidays table nor ``defaults.HOLIDAYS``), selects a shift 2
+    observance under the new name, saves, reloads into a fresh ``MainWindow``
+    and asserts both observances and the renamed default came back.
+    """
+    import datetime
+    from app import MainWindow
+    from holidays_tab import HolidayEditWindow, ObservanceSelectWindow
+    from utils import toQDate
+
+    errors = []
+    w = w2 = restore = tmp = None
+    try:
+        w, restore, tmp, _ = _detailTabsScratchSetup()
+        year = datetime.date.today().year
+        defaultsTab = w.holidaysTab.defaultsTab
+        obsTab = w.holidaysTab.observancesTab
+        obsTab.currentYear = year
+        obsTab.refresh()
+
+        dlg = HolidayEditWindow(defaultsTab, None, w)
+        dlg.holidayName.setText("Juneteenth")
+        dlg.holidayMonth.setCurrentText("6")
+        dlg.createButton.click()
+        sel = ObservanceSelectWindow(obsTab, year, "Juneteenth", 1, w)
+        sel.calendar.setSelectedDate(toQDate(datetime.date(year, 6, 19)))
+        sel.selectButton.click()
+
+        dlg2 = HolidayEditWindow(defaultsTab, "Juneteenth", w)
+        dlg2.holidayName.setText("Juneteenth Day")
+        dlg2.updateButton.click()
+        sel2 = ObservanceSelectWindow(obsTab, year, "Juneteenth Day", 2, w)
+        sel2.calendar.setSelectedDate(toQDate(datetime.date(year, 6, 20)))
+        sel2.selectButton.click()
+
+        expected = {
+            ("Juneteenth", 1): datetime.date(year, 6, 19),
+            ("Juneteenth Day", 2): datetime.date(year, 6, 20),
+        }
+        for (holiday, shift), date in expected.items():
+            got = w.db.holidays.getObservance(year, holiday, shift)
+            if got != date:
+                errors.append(f"before save: observance ({holiday!r}, shift {shift})={got!r}, want {date!r} (test setup bug)")
+        if errors:
+            return errors
+
+        w.fileManager.saveFile()
+        if w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        w2 = MainWindow()
+        if not w2.fileManager.setFile(tmp.name):
+            errors.append("setFile returned False when reloading the saved DB")
+            return errors
+        try:
+            w2.fileManager.loadFile()
+        except Exception as e:
+            errors.append(f"reloading the saved DB raised {e!r}")
+            return errors
+        for (holiday, shift), date in expected.items():
+            got = w2.db.holidays.getObservance(year, holiday, shift)
+            if got != date:
+                errors.append(f"after reload: observance ({holiday!r}, shift {shift})={got!r}, want {date!r}")
+        if w2.db.holidays.defaults.get("Juneteenth Day") != 6:
+            errors.append(f"after reload: defaults['Juneteenth Day']={w2.db.holidays.defaults.get('Juneteenth Day')!r}, want 6")
+    finally:
+        if restore is not None:
+            restore()
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        if w2 is not None and w2.fileManager.dbFile is not None:
+            w2.fileManager.dbFile.close()
+        if tmp is not None:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(tmp.name + suffix)
+                except OSError:
+                    pass
+    return errors
+
+
 def schedule_tab_generates() -> list[str]:
     """Step 53/66/67/71: ScheduleTab generates, groups, filters, exports, clears.
 

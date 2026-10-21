@@ -51,6 +51,7 @@ from smoke.ui import (
     fk_rename_refreshes_dependent_tabs, edit_refresh_preserves_picker_selection,
     inventory_edit_refreshes_value_labels,
     holidays_tab_observances, holidays_tab_defaults_crud,
+    holiday_observance_custom_name_roundtrip,
     telemetry_capture,
 )
 from smoke.scheduling import (
@@ -134,6 +135,7 @@ CHECKS: list[tuple[str, Callable[[], list[str]]]] = [
     ("inventory_edit_refreshes_value_labels", inventory_edit_refreshes_value_labels),
     ("holidays_tab_observances", holidays_tab_observances),
     ("holidays_tab_defaults_crud", holidays_tab_defaults_crud),
+    ("holiday_observance_custom_name_roundtrip", holiday_observance_custom_name_roundtrip),
     ("telemetry_capture", telemetry_capture),
     ("scheduling_working_days", scheduling_working_days),
     ("scheduling_presser_capacity", scheduling_presser_capacity),
@@ -180,6 +182,7 @@ __all__ = [
     "fk_rename_refreshes_dependent_tabs", "edit_refresh_preserves_picker_selection",
     "inventory_edit_refreshes_value_labels",
     "holidays_tab_observances", "holidays_tab_defaults_crud",
+    "holiday_observance_custom_name_roundtrip",
     "telemetry_capture",
     "scheduling_working_days", "scheduling_presser_capacity",
     "scheduling_pressing_rate", "scheduling_scrap_inflation",
