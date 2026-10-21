@@ -829,6 +829,136 @@ def close_confirm() -> list[str]:
     return errors
 
 
+def load_refused_row_leaves_no_file_open() -> list[str]:
+    """Bugfix (2026-10-21): a file the loader refuses is closed and reported,
+    not left half-loaded.
+
+    When ``_loadIntoDb`` raised on a row, the exception escaped
+    ``MainWindow._loadPath`` with the file manager already pointed at the new
+    file and ``db`` only partly filled. File → Open showed no message and left
+    Open / Save / Save As greyed out, and closing with the prompt's default,
+    Save, deleted every table not yet loaded. Saves a tiny fuzz DB, plants a
+    0-hour PTO row (``EmployeePTORange.setHours`` refuses it) in two copies,
+    and drives both entry points: File → Open over a good open file (the
+    button, clicked through Qt) and the startup auto-reopen (``_loadPath``
+    called directly, as ``main.py`` does). For each, asserts the failure is
+    reported in one error box naming the file and the loader's error, no file
+    is left open, ``db`` is empty, Open and Save As are enabled and Save is
+    not, and closing with Save chosen leaves every table's row count in the
+    file unchanged. The expected ERROR log of the failed load is muted.
+    """
+    import logging
+    import shutil
+    import sqlite3
+    from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+    from PySide6.QtGui import QCloseEvent
+    from app import MainWindow
+
+    errors = []
+    app = QApplication.instance() or QApplication(sys.argv)
+    restore = _silenceMessageBoxes()
+    shown = []
+    QMessageBox.critical = staticmethod(lambda _parent, title, text, *a, **_kw: shown.append((title, text)) or QMessageBox.StandardButton.Ok)  # type: ignore[assignment]
+    logging.disable(logging.ERROR)
+    origOpenDialog = QFileDialog.getOpenFileName
+    tables = ["employees", "attendance", "PTO", "notes", "holidays", "observances", "production", "orders", "parts"]
+    paths = []
+    windows = []
+
+    def tmpPath():
+        f = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        f.close()
+        paths.append(f.name)
+        return f.name
+
+    def counts(path):
+        conn = sqlite3.connect(path)
+        try:
+            return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
+        finally:
+            conn.close()
+
+    def checkFailedLoad(label, w, path, before):
+        name = os.path.basename(path)
+        if len(shown) != 1 or "hours > 0" not in shown[0][1] or name not in shown[0][1]:
+            errors.append(f"{label}: error boxes={shown}, want one naming {name!r} and 'hours > 0'")
+        shown.clear()
+        if w.fileManager.filePath is not None or w.fileManager.dbFile is not None:
+            errors.append(f"{label}: a file is still open: filePath={w.fileManager.filePath!r}")
+        if len(w.db.employees) != 0:
+            errors.append(f"{label}: db holds {len(w.db.employees)} employees from the refused file, want an empty db")
+        buttons = (w.openButton.isEnabled(), w.saveButton.isEnabled(), w.saveAsButton.isEnabled())
+        if buttons != (True, False, True):
+            errors.append(f"{label}: Open/Save/Save As enabled={buttons}, want (True, False, True)")
+        w._confirmCloseChoice = lambda: QMessageBox.StandardButton.Save  # type: ignore[assignment]
+        w.closeEvent(QCloseEvent())
+        after = counts(path)
+        if after != before:
+            errors.append(f"{label}: closing with Save changed the file: {before} -> {after}")
+
+    try:
+        good = tmpPath()
+        w0 = MainWindow()
+        windows.append(w0)
+        if not w0.fileManager.setFile(good):
+            errors.append("setFile returned False on fresh empty DB")
+            return errors
+        _, idNums, _ = _seedTinyFuzzDB(w0)
+        w0.fileManager.saveFile()
+        if w0.fileManager.dbFile is not None:
+            w0.fileManager.dbFile.close()
+
+        def plantRefusedRow():
+            path = tmpPath()
+            shutil.copyfile(good, path)
+            conn = sqlite3.connect(path)
+            conn.execute("INSERT INTO PTO VALUES (?, '2026-01-05', 'DROP', 0)", (idNums[0],))
+            conn.commit()
+            conn.close()
+            return path, counts(path)
+
+        # --- File → Open, over a good file that is open ---
+        bad, before = plantRefusedRow()
+        w = MainWindow()
+        windows.append(w)
+        if not w._loadPath(good):
+            errors.append("_loadPath returned False on the good file (test setup bug)")
+            return errors
+        shown.clear()
+        QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (bad, ""))  # type: ignore[assignment]
+        try:
+            w.openButton.click()
+        finally:
+            QFileDialog.getOpenFileName = origOpenDialog  # type: ignore[assignment]
+        checkFailedLoad("File > Open", w, bad, before)
+
+        # --- startup auto-reopen: main.py calls _loadPath directly ---
+        bad2, before2 = plantRefusedRow()
+        w2 = MainWindow()
+        windows.append(w2)
+        try:
+            ok = w2._loadPath(bad2)
+            if ok is not False:
+                errors.append(f"auto-reopen: _loadPath returned {ok!r}, want False")
+        except Exception as e:
+            errors.append(f"auto-reopen: _loadPath raised {e!r}, want False")
+        checkFailedLoad("auto-reopen", w2, bad2, before2)
+    finally:
+        QFileDialog.getOpenFileName = origOpenDialog  # type: ignore[assignment]
+        logging.disable(logging.NOTSET)
+        restore()
+        for win in windows:
+            if win.fileManager.dbFile is not None:
+                win.fileManager.dbFile.close()
+        for path in paths:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(path + suffix)
+                except OSError:
+                    pass
+    return errors
+
+
 def parts_tab_crud() -> list[str]:
     """Step 37: PartsTab dialog roundtrips against a tiny fuzz DB.
 

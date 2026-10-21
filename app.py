@@ -4,6 +4,7 @@ from records import Database, emptyDB
 from utils import newHLine
 from version import VERSION
 
+import logging
 import os
 
 class MainWindow(QWidget):
@@ -244,19 +245,44 @@ class MainWindow(QWidget):
 
     def _loadPath(self, path: str) -> bool:
         # Shared entry point for loading a DB from a known path — used by the
-        # File → Open dialog and by the startup auto-reopen hook. Skips any modal
-        # UI so a smoke test can drive the load path directly. Always refreshes
-        # the label, tabs, and Save-button state so the caller doesn't have to;
-        # only persists lastDbPath and returns True on a successful load.
+        # File → Open dialog and by the startup auto-reopen hook. Skips the file
+        # dialog so a smoke test can drive the load path directly; its one modal
+        # is the error box of a failed load, shown after the repaint. Always
+        # refreshes the label, tabs, and Save-button state so the caller doesn't
+        # have to; only persists lastDbPath and returns True on a successful load.
         success = self.fileManager.setFile(path)
+        failure = None
         if success:
-            self.fileManager.loadFile()
+            try:
+                self.fileManager.loadFile()
+            except Exception as e:
+                # A row the loader refuses (any fromTuple check) used to escape
+                # from here with the file manager pointed at `path` and self.db
+                # only partly filled, so Save (the close prompt's default) then
+                # deleted every table not yet loaded. Close the file instead, so
+                # nothing can be saved over it, and say so.
+                logging.exception(f"Load failed for {path}")
+                self.fileManager.closeFile()
+                self.db = emptyDB()
+                success = False
+                failure = e
         self.setFileLabel()
         self._refreshAllTabs()
         self.saveButton.setEnabled(self.fileManager.filePath is not None)
         if success:
             QSettings().setValue("lastDbPath", self.fileManager.filePath)
+        elif failure is not None:
+            self._reportLoadFailure(path, failure)
         return success
+
+    def _reportLoadFailure(self, path: str, error: Exception):
+        QMessageBox.critical(
+            self, "Could not open file",
+            f"MERCY could not open {os.path.basename(path)}: a record in it "
+            f"could not be read.\n\nDetails: {error}\n\n"
+            f"The file was closed without saving, so its records are as they "
+            f"were. Keep the file and report this message.",
+        )
 
     def open(self):
         self.openButton.setEnabled(False)

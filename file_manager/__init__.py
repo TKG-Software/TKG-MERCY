@@ -75,6 +75,14 @@ class FileManager(SchemaMixin, MigrateMixin, SaveMixin, LoadMixin, ImportMixin):
             self.dbFile = oldConn
         return success
 
+    def closeFile(self):
+        # Forget the open file without saving. MainWindow._loadPath calls this
+        # when loading the file failed, so that nothing can be saved over it.
+        if self.dbFile is not None:
+            self.dbFile.close()
+        self.filePath = None
+        self.dbFile = None
+
     def initFile(self):
         if self.filePath is None:
             raise RuntimeError('self.filePath is None')

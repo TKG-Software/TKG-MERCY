@@ -18,11 +18,11 @@ The `EditWindow` shape (from the Step 81 split-out, was §13.53): a thin base ow
 
 ## Open bugs (the freeze allows the fix; each needs Matthew's agreement)
 
-Found 2026-10-21 while fixing the web port's employee-audit bugs ([WORKLOG](WORKLOG.md)); none fixed yet.
+Found 2026-10-21 while fixing the web port's employee-audit bugs ([WORKLOG](WORKLOG.md)); none fixed yet. (The half-loaded-file bug found the same day is fixed and recorded there.)
 
-- **A file the loader refuses opens half-loaded, and Save then deletes whatever was not loaded.** When `_loadIntoDb` raises partway (any `fromTuple` check, such as `setHours`'s hours > 0), `MainWindow._loadPath` has already pointed the file manager at the new file and replaced `self.db` with the partly filled one; the exception escapes before the label, tabs and buttons are refreshed. From File → Open no message box appears (the traceback goes to stderr only, which the windowed exe does not show; run from source offscreen, not on the exe), Open / Save / Save As stay greyed out, and the label and tabs are not repainted (the label still named the previous file). From the startup auto-reopen, `main.py` logs it and the window shows empty tabs. Either way the close prompt's default button is Save, and `saveFile` deletes every row that is not in memory. Run headless on two fuzz copies, each with one planted 0-hour PTO row (File → Open, and the auto-reopen path), then saved as the close prompt's Save does: notes 58 → 0, holidays 10 → 0, observances 60 → 0, production 28,394 → 0, orders 120 → 0 (every table loaded after PTO), and the bad row went too, so the file then opens with that data gone. Until it is fixed: if MERCY ever opens a file and nothing changes on screen, close with **Don't Save**. Fix direction: on a failed load, show the error naming the table and row, and leave no file open (no path, empty `db`), so nothing can be saved over it.
 - **Manage Carryover → Drop does not refresh the PTO table** ([pto_tab.py](pto_tab.py) `PTOCarryWindow.drop`; Carry Over, Cash Out and Reset do). The row is stored (it shows after save and reopen) but the table misses it until the tab is refreshed. One line.
 - **The Defaults tab accepts an empty holiday name** ([holidays_tab.py](holidays_tab.py) `HolidayEditWindow.readData`), which then shows as an unlabelled row on Observances. Harmless to loading since the observance name check went.
+- **File → Open on a file that is not a MERCY database does nothing visible** ([app.py](app.py) `open` ignores `_loadPath`'s False from `FileManager.setFile`). Run 2026-10-21 on a text file named `.db`: no message, the label unchanged, the previous file still open, so nothing is at risk. One message box.
 
 ## Unnumbered
 
