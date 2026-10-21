@@ -3243,6 +3243,84 @@ def pto_dialog_roundtrip() -> list[str]:
     return errors
 
 
+def pto_carry_no_unused_hours() -> list[str]:
+    """Bugfix (2026-10-21): PTOCarryWindow writes no 0-hour carryover row.
+
+    The hours slider's minimum is 1, so for an employee with less than one
+    unused hour last year Qt pins its range and value to 0, and Carry Over /
+    Cash Out / Drop used to store a 0-hour row. The loader's
+    ``EmployeePTORange.setHours`` refuses hours <= 0, so the saved file would
+    no longer open. Drives the window for an employee hired this year (no
+    hours last year) and asserts that all three buttons write nothing; then,
+    as the control, that Drop still writes a positive row for a tenured
+    employee; then saves, reloads into a fresh ``MainWindow`` and asserts the
+    file loads.
+    """
+    import datetime
+    from app import MainWindow
+    from pto_tab import PTOCarryWindow
+
+    errors = []
+    w = w2 = restore = tmp = None
+    try:
+        w, restore, tmp, idNums = _detailTabsScratchSetup()
+        if len(idNums) < 2:
+            errors.append("fuzz fixture produced fewer than 2 employees (test setup bug)")
+            return errors
+        today = datetime.date.today()
+        newHire, tenured = sorted(idNums)[:2]
+        for i in (newHire, tenured):
+            w.db.employees[i].status = True
+            w.db.employees[i].fullTime = True
+        w.db.employees[newHire].anniversary = datetime.date(today.year, 1, 1)
+        w.db.employees[tenured].anniversary = datetime.date(today.year - 5, 1, 1)
+        w.db.PTO[newHire].PTO.clear()
+        w.db.PTO[tenured].PTO.clear()
+
+        for button in ("carryButton", "cashButton", "dropButton"):
+            dlg = PTOCarryWindow(newHire, w)
+            if dlg.unusedHours != 0:
+                errors.append(f"new hire unusedHours={dlg.unusedHours!r}, want 0 (test setup bug)")
+                return errors
+            getattr(dlg, button).click()
+            written = [(k, r.hours) for k, r in w.db.PTO[newHire].PTO.items()]
+            if written:
+                errors.append(f"{button} with no unused hours wrote {written}, want nothing")
+                w.db.PTO[newHire].PTO.clear()
+
+        dlg = PTOCarryWindow(tenured, w)
+        dlg.dropButton.click()
+        rec = w.db.PTO[tenured].PTO.get((today, "DROP"))
+        if rec is None or not rec.hours >= 1:
+            errors.append(f"control: Drop for a tenured employee wrote {(rec.hours if rec else None)!r}, want >= 1 hour")
+
+        w.fileManager.saveFile()
+        if w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        w2 = MainWindow()
+        if not w2.fileManager.setFile(tmp.name):
+            errors.append("setFile returned False when reloading the saved DB")
+        else:
+            try:
+                w2.fileManager.loadFile()
+            except Exception as e:
+                errors.append(f"reloading the saved DB raised {e!r}")
+    finally:
+        if restore is not None:
+            restore()
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        if w2 is not None and w2.fileManager.dbFile is not None:
+            w2.fileManager.dbFile.close()
+        if tmp is not None:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(tmp.name + suffix)
+                except OSError:
+                    pass
+    return errors
+
+
 def notes_dialog_roundtrip() -> list[str]:
     """Step 37b: NotesEditWindow new-and-edit roundtrips.
 

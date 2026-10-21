@@ -318,7 +318,19 @@ class PTOCarryWindow(QWidget):
         centerOnScreen(self)
         self.show()
 
+    def noHoursToAssign(self):
+        # With less than 1 unused hour the slider's range (minimum 1) collapses
+        # to 0..0, and a 0-hour row would be stored that the loader
+        # (EmployeePTORange.setHours) refuses, so the file would not reopen.
+        if self.toUseSlider.value() >= 1:
+            return False
+        errorMessage(self, [f"Employee {self.employeeID} has less than 1 unused hour from {datetime.date.today().year - 1}, so there is nothing to carry over, cash out or drop."])
+        self.close()
+        return True
+
     def carry(self):
+        if self.noHoursToAssign():
+            return
         # Re-read the carry type at click time rather than trusting the
         # self.unusedType snapshot from dialog construction: if another
         # carryover dialog (or report path) wrote a CARRY/CASH/DROP for the
@@ -345,6 +357,8 @@ class PTOCarryWindow(QWidget):
         self.close()
 
     def cash(self):
+        if self.noHoursToAssign():
+            return
         abort = False
         currentType = self.PTODB.getCarryType(datetime.date.today().year)
         if currentType == "CASH":
@@ -365,6 +379,8 @@ class PTOCarryWindow(QWidget):
         self.close()
 
     def drop(self):
+        if self.noHoursToAssign():
+            return
         abort = False
         currentType = self.PTODB.getCarryType(datetime.date.today().year)
         if currentType == "DROP":

@@ -2,6 +2,12 @@
 
 Backward-looking narrative per landed step; **grows, newest first.** Entry length scales with the step — a one-line change gets one line, a subsystem gets paragraphs. Durable lessons graduate to [CONVENTIONS.md](CONVENTIONS.md); the rotation rule lives in [HANDOFF.md](HANDOFF.md) § The doc system. Everything through Step 83's planning is archived in [plan_archive/merge_plan.md](plan_archive/merge_plan.md) (§12.1 status table + §13 narratives) and [plan_archive/implementation_notes.md](plan_archive/implementation_notes.md); the entries below re-state only the recent steps whose details are still likely to be needed at hand.
 
+## Bugfixes from the web port's employee audit (2026-10-21)
+
+Four bugs found by the mercy-web session while it audited the eight employee tables for its port (its ROADMAP R15). Each lands as its own commit with a smoke check that was run and seen to fail before the fix. Unreleased past `v2.0rc5`: each still needs Matthew's manual check on Windows before a release.
+
+- **PTO carryover with less than 1 unused hour** ([pto_tab.py](pto_tab.py) `PTOCarryWindow`). The hours slider's minimum is 1, so with no unused hours last year Qt collapsed its range to 0..0 and Carry Over / Cash Out / Drop stored a 0-hour row, which the loader (`EmployeePTORange.setHours`, hours > 0) refuses: the saved file would not reopen. The three buttons now check the slider first and, below 1 hour, say there is nothing to carry over, cash out or drop, store nothing and close. Smoke `pto_carry_no_unused_hours` (all three buttons wrote `(today, marker, 0)` before the fix; a Drop for a tenured employee still writes; the saved file reloads).
+
 ## T1.7 — tab-usage telemetry (2026-09-04)
 
 The freeze's one sanctioned add (see the Freeze entry below): passive screen-usage logging feeding the web transition's Phase 4 screen triage — with no on-site observation possible, weeks of measured tab usage stand in for watching the office work. New root [`telemetry.py`](telemetry.py); `main.py` calls `telemetry.instrument(window)` after construction, which hooks `currentChanged` on every `QTabWidget` via `findChildren` and appends one JSONL line per activation — timestamp, hostname, app version, full breadcrumb (`Products/Mixtures`, computed by climbing ancestor QTabWidgets) — plus a `launch` marker per session, to `%LOCALAPPDATA%\MERCY\telemetry\usage-<hostname>.jsonl` (`MERCY_TELEMETRY_DIR` overrides; collection stays manual — the office sends the files at triage time).
