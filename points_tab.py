@@ -257,10 +257,13 @@ class PointsEditWindow(QWidget):
         if reason == "Other" and other in POINT_VALS:
             errors.append(f"Other reason \"{other}\" is a default reason")
         points = checkInput(self.pointsInput.text(), float, "nonneg", errors, "Point Value")
+        # Both paths store the typed text for Other, never the word "Other"
+        # (the update path used to store the combo box's text).
+        storedReason = other if reason == "Other" else reason
 
         if len(errors) == 0:
             if isNew:
-                point = EmployeePoint(self.employeeID, date, other if reason == "Other" else reason, points)
+                point = EmployeePoint(self.employeeID, date, storedReason, points)
                 self.point = point
             else:
                 if self.point is None:
@@ -272,7 +275,7 @@ class PointsEditWindow(QWidget):
                 # re-adds rather than KeyErroring. New-date collision guarded above.
                 self.pointDB.points.pop(self.point.date, None)
                 self.point.date = date
-                self.point.reason = reason
+                self.point.reason = storedReason
                 self.point.value = points
                 point = self.point
             self.pointDB.points[date] = point

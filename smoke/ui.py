@@ -3177,6 +3177,79 @@ def points_dialog_roundtrip() -> list[str]:
     return errors
 
 
+def points_edit_keeps_other_reason() -> list[str]:
+    """Bugfix (2026-10-21): editing a point whose reason is Other keeps the
+    typed reason.
+
+    ``PointsEditWindow.readData``'s update path stored the combo box's text,
+    so an edit of an Other point replaced the typed reason with the word
+    "Other" (the create path already stored the typed text). Creates an Other
+    point with a typed reason, edits only its value and asserts the reason
+    survives; edits the typed reason and asserts the new text is stored; then,
+    as the control, switches it to a default reason.
+    """
+    from utils import toQDate
+    from points_tab import PointsEditWindow
+
+    errors = []
+    w = restore = tmp = None
+    try:
+        w, restore, tmp, idNums = _detailTabsScratchSetup()
+        fixtureId = sorted(i for i in idNums if w.db.employees[i].status)[0]
+        w.overviewTab.employeePicker.setCurrentText(_pickerSelectionFor(w.db.employees[fixtureId]))
+        d = datetime_date(2026, 4, 8)
+        while d in w.db.attendance[fixtureId].points:
+            d = d + __import__("datetime").timedelta(days=1)
+
+        dlg = PointsEditWindow(fixtureId, None, w)
+        dlg.calendar.setSelectedDate(toQDate(d))
+        dlg.reasons.setCurrentText("Other")
+        dlg.otherReason.setText("Doctor note")
+        dlg.pointsInput.setText("2")
+        dlg.createButton.click()
+        rec = w.db.attendance[fixtureId].points.get(d)
+        if rec is None or rec.reason != "Doctor note":
+            errors.append(f"after Create: reason={(rec.reason if rec else None)!r}, want 'Doctor note' (test setup bug)")
+            return errors
+
+        dlg2 = PointsEditWindow(fixtureId, rec, w)
+        if dlg2.reasons.currentText() != "Other" or dlg2.otherReason.text() != "Doctor note":
+            errors.append(f"Edit prefill: reasons={dlg2.reasons.currentText()!r} other={dlg2.otherReason.text()!r}, want 'Other' / 'Doctor note'")
+        dlg2.pointsInput.setText("3")
+        dlg2.updateButton.click()
+        rec2 = w.db.attendance[fixtureId].points.get(d)
+        if rec2 is None or rec2.reason != "Doctor note" or rec2.value != 3.0:
+            errors.append(f"after value-only Update: (reason, value)={((rec2.reason, rec2.value) if rec2 else None)!r}, want ('Doctor note', 3.0)")
+            return errors
+
+        dlg3 = PointsEditWindow(fixtureId, rec2, w)
+        dlg3.otherReason.setText("Doctor note, late")
+        dlg3.updateButton.click()
+        rec3 = w.db.attendance[fixtureId].points.get(d)
+        if rec3 is None or rec3.reason != "Doctor note, late":
+            errors.append(f"after reason Update: reason={(rec3.reason if rec3 else None)!r}, want 'Doctor note, late'")
+            return errors
+
+        dlg4 = PointsEditWindow(fixtureId, rec3, w)
+        dlg4.reasons.setCurrentText("Tardy")
+        dlg4.updateButton.click()
+        rec4 = w.db.attendance[fixtureId].points.get(d)
+        if rec4 is None or rec4.reason != "Tardy":
+            errors.append(f"control: Other -> Tardy Update: reason={(rec4.reason if rec4 else None)!r}, want 'Tardy'")
+    finally:
+        if restore is not None:
+            restore()
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        if tmp is not None:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(tmp.name + suffix)
+                except OSError:
+                    pass
+    return errors
+
+
 def pto_dialog_roundtrip() -> list[str]:
     """Step 37b: PTOEditWindow new-and-edit roundtrips.
 
