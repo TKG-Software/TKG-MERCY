@@ -18,7 +18,7 @@ from smoke.records import (
     compile_all, empty_roundtrip,
     production_roundtrip, production_tool_change_roundtrip,
     production_quantity_validation, mixture_full_loi_material,
-    mixture_zero_weight_no_crash,
+    mixture_zero_weight_no_crash, pto_clear_carry_year_scoped,
 )
 from smoke.migrations import (
     legacy_anika_migration, legacy_becky_migration, legacy_merge,
@@ -92,6 +92,7 @@ CHECKS: list[tuple[str, Callable[[], list[str]]]] = [
     ("production_tool_change_roundtrip", production_tool_change_roundtrip),
     ("mixture_full_loi_material", mixture_full_loi_material),
     ("mixture_zero_weight_no_crash", mixture_zero_weight_no_crash),
+    ("pto_clear_carry_year_scoped", pto_clear_carry_year_scoped),
     ("production_report", production_report),
     ("production_productivity_report", production_productivity_report),
     ("production_employee_productivity_report", production_employee_productivity_report),
@@ -155,7 +156,7 @@ __all__ = [
     "compile_all", "docs_single_source", "empty_roundtrip",
     "production_roundtrip", "production_tool_change_roundtrip",
     "production_quantity_validation", "mixture_full_loi_material",
-    "mixture_zero_weight_no_crash",
+    "mixture_zero_weight_no_crash", "pto_clear_carry_year_scoped",
     "legacy_anika_migration", "legacy_becky_migration", "legacy_merge",
     "mercy_v3_to_v4_migration", "mercy_v4_to_v5_migration", "mercy_v5_to_v6_migration",
     "mercy_v6_to_v7_migration", "mercy_v7_to_v8_migration", "mercy_v8_to_v9_migration",

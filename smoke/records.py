@@ -681,3 +681,38 @@ def mixture_zero_weight_no_crash() -> list[str]:
             except OSError:
                 pass
     return errors
+
+
+def pto_clear_carry_year_scoped() -> list[str]:
+    """Bugfix (2026-10-21): ``EmployeePTODB.clearCarry(year)`` clears only that
+    year's CARRY/CASH/DROP marker.
+
+    Its test read ``a and b or c or d``, which Python binds as
+    ``(a and b) or c or d``, so clearing one year's carryover (Manage
+    Carryover → Reset, or an overwrite) also deleted every other year's CASH
+    and DROP rows. Plants a 2024 CASH, a 2025 DROP, a 2026 CARRY and a dated
+    2026 range; clears 2026 and asserts only the CARRY went; clears 2025 and
+    asserts only the DROP went.
+    """
+    from records import EmployeePTODB, EmployeePTORange
+
+    errors = []
+    db = EmployeePTODB(1)
+    cash2024 = (datetime_date(2024, 1, 1), "CASH")
+    drop2025 = (datetime_date(2025, 1, 1), "DROP")
+    carry2026 = (datetime_date(2026, 1, 1), "CARRY")
+    range2026 = (datetime_date(2026, 3, 2), datetime_date(2026, 3, 3))
+    for key, hours in ((cash2024, 16), (drop2025, 8), (carry2026, 20), (range2026, 16)):
+        db.PTO[key] = EmployeePTORange(1, key[0], key[1], hours)
+
+    db.clearCarry(2026)
+    want = {cash2024, drop2025, range2026}
+    if set(db.PTO) != want:
+        errors.append(f"clearCarry(2026) left {sorted(map(str, db.PTO))}, want {sorted(map(str, want))}")
+
+    db.PTO[carry2026] = EmployeePTORange(1, carry2026[0], carry2026[1], 20)
+    db.clearCarry(2025)
+    want = {cash2024, carry2026, range2026}
+    if set(db.PTO) != want:
+        errors.append(f"clearCarry(2025) left {sorted(map(str, db.PTO))}, want {sorted(map(str, want))}")
+    return errors

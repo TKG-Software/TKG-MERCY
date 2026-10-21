@@ -470,8 +470,11 @@ class EmployeePTODB:
     def clearCarry(self, year: int):
         toClear = []
         for dates in self.PTO:
-            if dates[0].year == year and dates[1] == "CARRY" or dates[1] == "CASH" or dates[1] == "DROP":
-                    toClear.append(dates)
+            # The marker test is grouped: written as `year and CARRY or CASH or
+            # DROP` it bound as `(year and CARRY) or ...` and cleared every
+            # year's CASH and DROP rows.
+            if dates[0].year == year and dates[1] in ["CARRY", "CASH", "DROP"]:
+                toClear.append(dates)
         for dates in toClear:
             del self.PTO[dates]
 
