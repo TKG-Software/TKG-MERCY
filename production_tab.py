@@ -284,6 +284,13 @@ class ProductionEditWindow(QWidget):
             suffix = "" if emp.status else " [inactive]"
             self.employeeBox.addItem(_employeeLabel(emp) + suffix, userData=emp.idNum)
         if not self.isNew and record is not None:
+            # A record of an employee deleted since (kept by delEmployee, shown
+            # on the tab as "(missing #id)") keeps that employee: without an
+            # entry of its own the box stayed on its first employee, and Update
+            # saved them in its place. readData lets Update, not Create, keep it.
+            if self.employeeBox.findData(record.employeeId) < 0:
+                self.employeeBox.insertItem(0, f"(missing #{record.employeeId})",
+                                            userData=record.employeeId)
             for i in range(self.employeeBox.count()):
                 if self.employeeBox.itemData(i) == record.employeeId:
                     self.employeeBox.setCurrentIndex(i)
@@ -379,6 +386,17 @@ class ProductionEditWindow(QWidget):
         else:
             names = []
         self.targetBox.addItems(names)
+        # A record whose part or mixture is no longer listed (deleted or renamed
+        # since) keeps it: it goes first, marked, carrying its name as the
+        # item's data. Without it the box stayed on the first name of the list,
+        # and Update saved that in its place (2026-10-27; 62 such records in
+        # the office's file of 10-5-26). readData lets Update, not Create, keep it.
+        record = self.record
+        if (record is not None and targetType and record.targetType == targetType
+                and record.targetName and record.targetName not in names):
+            self.targetBox.insertItem(0, f"{record.targetName} (no longer listed)",
+                                      userData=record.targetName)
+            self.targetBox.setCurrentIndex(0)
         unit = PRODUCTION_TARGET_UNIT.get(targetType or "", "")
         self.unitLabel.setText(f"Unit: {unit}" if unit else "Unit: —")
         # Targetless actions (Tool Change) hide the target + scrap rows entirely —
@@ -391,11 +409,15 @@ class ProductionEditWindow(QWidget):
 
     def readData(self, isNew: bool) -> bool:
         errors: list[str] = []
+        # Update keeps the record's own employee and target even when they are
+        # no longer listed (the boxes offer them); Create still refuses them.
+        own = None if isNew else self.record
 
         empId = self.employeeBox.currentData()
         if empId is None:
             errors.append("No employee selected.")
-        elif empId not in self.mainApp.db.employees:
+        elif (empId not in self.mainApp.db.employees
+              and not (own is not None and empId == own.employeeId)):
             errors.append(f"Employee {empId} no longer exists.")
 
         date = fromQDate(self.calendar.selectedDate())
@@ -416,10 +438,12 @@ class ProductionEditWindow(QWidget):
             targetName = ""
             scrap = 0.0
         else:
-            targetName = self.targetBox.currentText()
+            # A kept target's item carries its name as data; a listed one is its text.
+            targetName = self.targetBox.currentData() or self.targetBox.currentText()
             if not targetName:
                 errors.append("No target selected.")
-            else:
+            elif not (own is not None
+                      and (targetType, targetName) == (own.targetType, own.targetName)):
                 if targetType == "mix" and targetName not in self.mainApp.db.mixtures:
                     errors.append(f"Mixture {targetName!r} no longer exists.")
                 if targetType == "part" and targetName not in self.mainApp.db.parts:

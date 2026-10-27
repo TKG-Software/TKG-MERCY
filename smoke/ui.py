@@ -3380,6 +3380,122 @@ def points_edit_keeps_other_reason() -> list[str]:
     return errors
 
 
+def production_edit_keeps_unlisted_target() -> list[str]:
+    """Bugfix (2026-10-27): editing a production record whose part, mixture or
+    employee is no longer listed keeps it.
+
+    ``ProductionEditWindow`` filled its boxes from the parts (or mixtures) and
+    employees listed now and selected the record's own by name or id; when it
+    was missing, the box stayed on its first entry and Update saved that
+    instead, without a word. The office's file of 10-5-26 has 62 such records,
+    55 of them PTC-5. Edits, through Update: a Pressing record of an unlisted
+    part (quantity, then date, then the action to Finishing), a Batching record
+    of an unlisted mixture, and a record of an employee deleted since (an id
+    with no employee, as ``delEmployee`` leaves it); each must keep its own.
+    Controls: a listed part or employee chosen in its place is saved, and
+    Create from the window with the unlisted part is refused.
+    """
+    import datetime
+    from records import ProductionRecord
+    from production_tab import ProductionEditWindow
+    from utils import toQDate
+
+    errors = []
+    w = restore = tmp = None
+    try:
+        w, restore, tmp, idNums = _detailTabsScratchSetup()
+        db = w.db
+        empId = sorted(i for i in idNums if db.employees[i].status)[0]
+        gone = max(idNums) + 1000
+        listedPart = sorted(db.parts)[0]
+        day = datetime_date(2026, 4, 20)
+
+        def stored(empId, date, action, targetName):
+            rec = ProductionRecord()
+            rec.setRecord(empId, date, 1, action, targetName, 10, 1, 8)
+            db.production[rec.key()] = rec
+            return rec
+
+        def edit(rec, change):
+            dlg = ProductionEditWindow(w.productionTab, rec, w)
+            change(dlg)
+            dlg.mainLayout[-1][0].click()  # Update
+
+        def only(**match):
+            found = [r for r in db.production.values()
+                     if all(getattr(r, k) == v for k, v in match.items())]
+            return found[0] if len(found) == 1 else None
+
+        rec = stored(empId, day, "Pressing", "PTC-5")
+        dlg = ProductionEditWindow(w.productionTab, rec, w)
+        if dlg.targetBox.currentData() != "PTC-5":
+            errors.append(f"part prefill: box shows {dlg.targetBox.currentText()!r}, want PTC-5 (no longer listed)")
+        dlg.close()
+        edit(rec, lambda d: d.quantityEdit.setText("12"))
+        got = only(employeeId=empId, date=day)
+        if got is None or (got.targetName, got.quantity) != ("PTC-5", 12.0):
+            errors.append(f"part, quantity Update: stored {((got.targetName, got.quantity) if got else None)!r}, want ('PTC-5', 12.0)")
+            return errors
+        later = day + datetime.timedelta(days=1)
+        edit(got, lambda d: d.calendar.setSelectedDate(toQDate(later)))
+        got = only(employeeId=empId, date=later)
+        if got is None or got.targetName != "PTC-5":
+            errors.append(f"part, date Update: stored {(got.targetName if got else None)!r}, want 'PTC-5'")
+            return errors
+        edit(got, lambda d: d.actionBox.setCurrentText("Finishing"))
+        got = only(employeeId=empId, date=later)
+        if got is None or (got.action, got.targetName) != ("Finishing", "PTC-5"):
+            errors.append(f"part, action Update: stored {((got.action, got.targetName) if got else None)!r}, want ('Finishing', 'PTC-5')")
+            return errors
+
+        before = len(db.production)
+        dlg = ProductionEditWindow(w.productionTab, got, w)
+        dlg.calendar.setSelectedDate(toQDate(later + datetime.timedelta(days=1)))
+        dlg.mainLayout[-1][1].click()  # Create
+        if len(db.production) != before:
+            errors.append("control: Create with the unlisted part was not refused")
+        dlg.close()
+        edit(got, lambda d: d.targetBox.setCurrentText(listedPart))
+        got = only(employeeId=empId, date=later)
+        if got is None or got.targetName != listedPart:
+            errors.append(f"control: listed part chosen: stored {(got.targetName if got else None)!r}, want {listedPart!r}")
+
+        mixDay = day + datetime.timedelta(days=10)
+        rec = stored(empId, mixDay, "Batching", "Retired mix")
+        edit(rec, lambda d: d.quantityEdit.setText("3"))
+        got = only(employeeId=empId, date=mixDay)
+        if got is None or (got.targetName, got.quantity) != ("Retired mix", 3.0):
+            errors.append(f"mixture Update: stored {((got.targetName, got.quantity) if got else None)!r}, want ('Retired mix', 3.0)")
+
+        empDay = day + datetime.timedelta(days=20)
+        rec = stored(gone, empDay, "Pressing", listedPart)
+        dlg = ProductionEditWindow(w.productionTab, rec, w)
+        if dlg.employeeBox.currentData() != gone:
+            errors.append(f"employee prefill: box shows {dlg.employeeBox.currentText()!r}, want (missing #{gone})")
+        dlg.close()
+        edit(rec, lambda d: d.quantityEdit.setText("4"))
+        got = only(date=empDay)
+        if got is None or (got.employeeId, got.quantity) != (gone, 4.0):
+            errors.append(f"employee Update: stored {((got.employeeId, got.quantity) if got else None)!r}, want ({gone}, 4.0)")
+            return errors
+        edit(got, lambda d: d.employeeBox.setCurrentIndex(d.employeeBox.findData(empId)))
+        got = only(date=empDay)
+        if got is None or got.employeeId != empId:
+            errors.append(f"control: listed employee chosen: stored {(got.employeeId if got else None)!r}, want {empId}")
+    finally:
+        if restore is not None:
+            restore()
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        if tmp is not None:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(tmp.name + suffix)
+                except OSError:
+                    pass
+    return errors
+
+
 def pto_dialog_roundtrip() -> list[str]:
     """Step 37b: PTOEditWindow new-and-edit roundtrips.
 
