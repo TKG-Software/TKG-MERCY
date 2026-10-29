@@ -114,6 +114,146 @@ def production_report() -> list[str]:
     return errors
 
 
+def production_reports_keep_totals() -> list[str]:
+    """Bugfix (2026-10-29): a total row that does not fit at the foot of a
+    production report's page goes on the next page.
+
+    Each report drew its Total rows only when they fitted under the table's
+    last row, so a table that ended at the foot of a page had no Total, with
+    nothing on the page to say so: 9 of the 396 reports the web port drew
+    from the office's file of 10-5-26. Drawn here, recording each page's
+    strings: the summary for 1 to 40 employees, and a part's report, whose
+    two totals are Pressing's and Finishing's, for 1 to 40 records of each.
+    Every drawing must hold each total exactly once, and a total on a page
+    with no rows of its table must stand under "-- Continued". The known
+    answer that the case is reached: some summary puts its Total on a page
+    of its own.
+    """
+    import datetime
+    from PySide6.QtWidgets import QApplication
+    from app import MainWindow
+    from records import ProductionRecord, Employee
+    from report import PDFReport
+
+    errors = []
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    pdfPaths: list[str] = []
+    w = None
+    try:
+        w = MainWindow()
+        if not w.fileManager.setFile(tmp.name):
+            errors.append("setFile returned False on fresh empty DB")
+            return errors
+        db = w.db
+        start = datetime_date(2026, 4, 1)
+        end = datetime_date(2026, 4, 30)
+
+        def pagesOf(make):
+            # Each page's strings, in the order drawn, and each header-only
+            # table that was drawn (a total row), with the page it is on. A
+            # cell's text wraps, so the totals are read from drawTable.
+            tmpPdf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            tmpPdf.close()
+            pdfPaths.append(tmpPdf.name)
+            report = PDFReport(db, tmpPdf.name)
+            pages: list[list[str]] = [[]]
+            closings: list[tuple[int, list[str]]] = []
+            drawString = report.pdf.drawString
+            showPage = report.pdf.showPage
+            drawTable = report.drawTable
+
+            def recordString(x, y, text, *args, **kwargs):
+                pages[-1].append(text)
+                return drawString(x, y, text, *args, **kwargs)
+
+            def recordPage():
+                pages.append([])
+                return showPage()
+
+            def recordTable(data, headers=None, widths=None):
+                before = report.lastLine
+                drawn = drawTable(data, headers, widths)
+                if not data and headers is not None and report.lastLine != before:
+                    closings.append((len(pages) - 1, headers))
+                return drawn
+
+            report.pdf.drawString = recordString  # type: ignore[method-assign]
+            report.pdf.showPage = recordPage  # type: ignore[method-assign]
+            report.drawTable = recordTable  # type: ignore[method-assign]
+            make(report)
+            return pages, closings
+
+        def checkTotals(label, drawing, totals, section, rowMarks):
+            pages, closings = drawing
+            ownPage = False
+            for total in totals:
+                where = [i for i, headers in closings if total in headers]
+                if len(where) != 1:
+                    errors.append(f"{label}: {total!r} drawn {len(where)} times, want once")
+                    continue
+                page = pages[where[0]]
+                if not any(mark in text for text in page for mark in rowMarks):
+                    ownPage = True
+                    if f"{section} -- Continued" not in page:
+                        errors.append(f"{label}: {total!r} on a page of its own without "
+                                      f"'{section} -- Continued'")
+            return ownPage
+
+        names = []
+        anyOwnPage = False
+        for n in range(1, 41):
+            emp = Employee()
+            emp.idNum = 200 + n
+            emp.lastName = f"Worker{n:02d}"
+            emp.firstName = "Pat"
+            emp.shift = 1
+            emp.fullTime = True
+            emp.status = True
+            emp.anniversary = datetime_date(2020, 1, 1)
+            db.employees[emp.idNum] = emp
+            r = ProductionRecord()
+            r.setRecord(emp.idNum, datetime_date(2026, 4, 15), 1, "Pressing", "PartA", 100, 0, 8)
+            db.production[r.key()] = r
+            names.append(f"WORKER{n:02d}")
+            pages = pagesOf(lambda p: p.productionSummaryReport(start, end))
+            if checkTotals(f"summary of {n}", pages, ["Total"], "Production by Employee", names):
+                anyOwnPage = True
+        if not anyOwnPage:
+            errors.append("no summary of 1 to 40 employees put its Total on a page of its own: "
+                          "the case this check is for was not reached")
+
+        db.production.clear()
+        dates = []
+        for n in range(1, 41):
+            day = start + datetime.timedelta(days=(n - 1) % 29)
+            shift = 1 + (n - 1) // 29
+            for action in ("Pressing", "Finishing"):
+                r = ProductionRecord()
+                r.setRecord(201, day, shift, action, "PartA", 10, 0, 1)
+                db.production[r.key()] = r
+            dates.append(day.isoformat())
+            pages = pagesOf(lambda p: p.productionTargetReport("part", "PartA", start, end))
+            checkTotals(f"part report of {2 * n} records", pages,
+                        ["Total Pressing", "Total Finishing"], "Production Records", dates)
+    finally:
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.unlink(tmp.name + suffix)
+            except OSError:
+                pass
+        for p in pdfPaths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+    return errors
+
+
 def production_productivity_report() -> list[str]:
     """Step 18: productivity report covers all four layout cases + Tool Change.
 

@@ -30,7 +30,7 @@ from smoke.migrations import (
     mercy_v4_to_v14_end_to_end, scheduling_save_rollback,
 )
 from smoke.reports import (
-    production_report, production_productivity_report,
+    production_report, production_reports_keep_totals, production_productivity_report,
     production_employee_productivity_report, production_trend_report,
     product_employee_reports, schedule_report, order_status_report,
 )
@@ -96,6 +96,7 @@ CHECKS: list[tuple[str, Callable[[], list[str]]]] = [
     ("mixture_zero_weight_no_crash", mixture_zero_weight_no_crash),
     ("pto_clear_carry_year_scoped", pto_clear_carry_year_scoped),
     ("production_report", production_report),
+    ("production_reports_keep_totals", production_reports_keep_totals),
     ("production_productivity_report", production_productivity_report),
     ("production_employee_productivity_report", production_employee_productivity_report),
     ("production_trend_report", production_trend_report),
@@ -170,7 +171,7 @@ __all__ = [
     "mercy_v11_to_v12_migration", "mercy_v12_to_v13_migration",
     "mercy_v13_to_v14_migration",
     "mercy_v4_to_v14_end_to_end", "scheduling_save_rollback",
-    "production_report", "production_productivity_report",
+    "production_report", "production_reports_keep_totals", "production_productivity_report",
     "production_employee_productivity_report", "production_trend_report",
     "product_employee_reports", "schedule_report", "order_status_report",
     "production_refresh_on_delete", "inventory_edit_missing_date", "production_batch_roundtrip",

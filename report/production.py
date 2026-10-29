@@ -67,6 +67,7 @@ class ProductionReportsMixin:
         def drawSubtitle(self, text: str) -> None: ...
         def drawSection(self, text: str) -> None: ...
         def drawTable(self, data: list[list[str]], headers: list[str] | None = None, widths: list[float] | None = None) -> int: ...
+        def drawClosingRows(self, rows: list[list[str]], pageTop, section: str) -> None: ...
 
     def _filterProduction(self, startDate: datetime.date, endDate: datetime.date,
                           action: str | None = None,
@@ -165,16 +166,19 @@ class ProductionReportsMixin:
             self.drawText("No production recorded in this range.")
             self.nextPage()
         else:
-            while len(data) > 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle("TKG Production Summary")
                 self.drawSubtitle(rangeText)
                 self.skipLines(2)
+
+            while len(data) > 0:
+                pageTop()
                 self.drawSection("Production by Employee" if len(data) == olen
                                  else "Production by Employee -- Continued")
                 drawn = self.drawTable(data, headers)
                 if drawn == len(data):
-                    self.drawTable([], totalsRow)
+                    self.drawClosingRows([totalsRow], pageTop, "Production by Employee")
                 data = data[drawn:]
                 self.nextPage()
         self.pdf.save()
@@ -235,22 +239,26 @@ class ProductionReportsMixin:
             self.drawText("No production recorded in this range.")
             self.nextPage()
         else:
-            while len(data) > 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle(f"TKG {action} Report")
                 self.drawSubtitle(rangeText)
                 self.skipLines(2)
+
+            while len(data) > 0:
+                pageTop()
                 self.drawSection(f"{action} Records" if len(data) == olen
                                  else f"{action} Records -- Continued")
                 drawn = self.drawTable(data, headers)
                 if drawn == len(data):
                     if hasTarget:
-                        self.drawTable([], ["", "", "", "Total",
-                                            f"{totalQ:g}", f"{totalS:g}", f"{totalH:g}",
-                                            self._fmtRate(totalQ, totalH)])
+                        totalsRow = ["", "", "", "Total",
+                                     f"{totalQ:g}", f"{totalS:g}", f"{totalH:g}",
+                                     self._fmtRate(totalQ, totalH)]
                     else:
-                        self.drawTable([], ["", "", "Total",
-                                            f"{totalQ:g}", f"{totalH:g}"])
+                        totalsRow = ["", "", "Total",
+                                     f"{totalQ:g}", f"{totalH:g}"]
+                    self.drawClosingRows([totalsRow], pageTop, f"{action} Records")
                 data = data[drawn:]
                 self.nextPage()
         self.pdf.save()
@@ -300,20 +308,25 @@ class ProductionReportsMixin:
             self.drawText("No production recorded in this range.")
             self.nextPage()
         else:
-            while len(data) > 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle(f"TKG Production Report: {targetName}")
                 self.drawSubtitle(f"{targetLabel} ({rangeText})")
                 self.skipLines(2)
+
+            while len(data) > 0:
+                pageTop()
                 self.drawSection("Production Records" if len(data) == olen
                                  else "Production Records -- Continued")
                 drawn = self.drawTable(data, headers)
                 if drawn == len(data):
+                    totalsRows = []
                     for a in PRODUCTION_ACTIONS:
                         if a in perAction:
                             q, s, h = perAction[a]
-                            self.drawTable([], ["", "", "", f"Total {a}", f"{q:g}", f"{s:g}", f"{h:g}",
-                                                self._fmtRate(q, h)])
+                            totalsRows.append(["", "", "", f"Total {a}", f"{q:g}", f"{s:g}", f"{h:g}",
+                                               self._fmtRate(q, h)])
+                    self.drawClosingRows(totalsRows, pageTop, "Production Records")
                 data = data[drawn:]
                 self.nextPage()
         self.pdf.save()
@@ -368,26 +381,31 @@ class ProductionReportsMixin:
             self.drawText("No production recorded in this range.")
             self.nextPage()
         else:
-            while len(data) > 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle("TKG Production Report")
                 self.drawSubtitle(empName)
                 self.skipLines(1)
                 self.drawText(rangeText)
                 self.skipLines(1)
+
+            while len(data) > 0:
+                pageTop()
                 self.drawSection("Production Records" if len(data) == olen
                                  else "Production Records -- Continued")
                 drawn = self.drawTable(data, headers)
                 if drawn == len(data):
+                    totalsRows = []
                     for a in PRODUCTION_ACTIONS:
                         if a in perAction:
                             q, s, h = perAction[a]
                             unit = PRODUCTION_TARGET_UNIT[PRODUCTION_ACTION_TARGET[a]]
                             rate = ("—" if PRODUCTION_ACTION_TARGET[a] == ""
                                     else self._fmtRate(q, h))
-                            self.drawTable([], ["", "", f"Total {a}", "",
-                                                f"{q:g}", unit, f"{s:g}", f"{h:g}",
-                                                rate])
+                            totalsRows.append(["", "", f"Total {a}", "",
+                                               f"{q:g}", unit, f"{s:g}", f"{h:g}",
+                                               rate])
+                    self.drawClosingRows(totalsRows, pageTop, "Production Records")
                 data = data[drawn:]
                 self.nextPage()
         self.pdf.save()
@@ -481,17 +499,20 @@ class ProductionReportsMixin:
             # Totals render as their own pure-header table after the main rows
             # so they come out bold — same pattern productionSummaryReport
             # uses to emphasize its "Total" row.
-            olen = len(rows)
-            while len(rows) > 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle(title)
                 self.drawSubtitle(subtitle)
                 self.skipLines(2)
+
+            olen = len(rows)
+            while len(rows) > 0:
+                pageTop()
                 self.drawSection(sectionName if len(rows) == olen
                                  else f"{sectionName} -- Continued")
                 drawn = self.drawTable(rows, headers)
                 if drawn == len(rows) and totalsRow is not None:
-                    self.drawTable([], totalsRow)
+                    self.drawClosingRows([totalsRow], pageTop, sectionName)
                 rows = rows[drawn:]
                 self.nextPage()
 
@@ -589,17 +610,20 @@ class ProductionReportsMixin:
             # totals row would add anything.
             rows.append([str(shift), f"{totalH:g}"])
 
-        olen = len(rows)
-        while len(rows) > 0:
+        def pageTop():
             self.setupPage()
             self.drawTitle(title)
             self.drawSubtitle(subtitle)
             self.skipLines(2)
+
+        olen = len(rows)
+        while len(rows) > 0:
+            pageTop()
             self.drawSection("Hours by Shift" if len(rows) == olen
                              else "Hours by Shift -- Continued")
             drawn = self.drawTable(rows, headers)
             if drawn == len(rows) and totalsRow is not None:
-                self.drawTable([], totalsRow)
+                self.drawClosingRows([totalsRow], pageTop, "Hours by Shift")
             rows = rows[drawn:]
             self.nextPage()
         self.pdf.save()
@@ -704,17 +728,20 @@ class ProductionReportsMixin:
         def renderSection(sectionName: str, rows: list[list[str]],
                           headers: list[str],
                           totalsRow: list[str] | None = None):
-            olen = len(rows)
-            while len(rows) > 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle(title)
                 self.drawSubtitle(subtitle)
                 self.skipLines(2)
+
+            olen = len(rows)
+            while len(rows) > 0:
+                pageTop()
                 self.drawSection(sectionName if len(rows) == olen
                                  else f"{sectionName} -- Continued")
                 drawn = self.drawTable(rows, headers)
                 if drawn == len(rows) and totalsRow is not None:
-                    self.drawTable([], totalsRow)
+                    self.drawClosingRows([totalsRow], pageTop, sectionName)
                 rows = rows[drawn:]
                 self.nextPage()
 

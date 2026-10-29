@@ -68,6 +68,24 @@ class PDFReportCore:
         self.drawText(text)
         self.setFont(*oldFont)
 
+    def drawClosingRows(self, rows: list[list[str]], pageTop, section: str):
+        # Each of `rows` (a Total) after a table's last row, as a header-only
+        # table of its own so it comes out bold. One that does not fit at the
+        # foot of the page goes on the next page, under pageTop() and
+        # "<section> -- Continued"; until the bugfix of 2026-10-29 it was left
+        # out without a word. The same as mercy-web's `closing_rows`
+        # (mercy/reports.py).
+        for row in rows:
+            # drawTable counts data rows only, so a header-only table that did
+            # not fit is told by the page's line not moving.
+            before = self.lastLine
+            self.drawTable([], row)
+            if self.lastLine == before:
+                self.nextPage()
+                pageTop()
+                self.drawSection(f"{section} -- Continued")
+                self.drawTable([], row)
+
     def drawParagraph(self, text: str):
         maxWidth = self.right - self.left
         for paragraph in text.split("\n"):
