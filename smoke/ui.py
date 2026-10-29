@@ -3496,6 +3496,112 @@ def production_edit_keeps_unlisted_target() -> list[str]:
     return errors
 
 
+def production_refuses_future_date() -> list[str]:
+    """Bugfix (2026-10-29): a production record dated after today is refused.
+
+    Neither ``ProductionEditWindow`` nor ``ProductionBatchDialog`` checked the
+    date, and the office's file of 10-5-26 holds 112 records dated after the
+    day it arrived, 108 of them in 2027; a report counts only the records
+    inside its dates, so each was missing from the reports of its real day.
+    Refused, with nothing stored or changed: Create for tomorrow; Update of a
+    stored record to tomorrow; Update of a stored record dated a year ahead,
+    as the file holds them, with only its quantity changed; a batch for
+    tomorrow. Controls: that record's date corrected to today is saved through
+    Update, and a batch for yesterday is saved.
+    """
+    import datetime
+    from records import ProductionRecord
+    from production_tab import ProductionEditWindow, ProductionBatchDialog
+    from utils import toQDate
+
+    errors = []
+    w = restore = tmp = None
+    try:
+        w, restore, tmp, idNums = _detailTabsScratchSetup()
+        db = w.db
+        empId = sorted(i for i in idNums if db.employees[i].status)[0]
+        part = sorted(db.parts)[0]
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+        yearAhead = today + datetime.timedelta(days=365)
+
+        def stored(date, quantity):
+            rec = ProductionRecord()
+            rec.setRecord(empId, date, 3, "Pressing", part, quantity, 0, 8)
+            db.production[rec.key()] = rec
+            return rec
+
+        def snapshot():
+            return sorted((r.date, r.quantity) for r in db.production.values()
+                          if r.employeeId == empId)
+
+        dlg = ProductionEditWindow(w.productionTab, None, w)
+        dlg.employeeBox.setCurrentIndex(dlg.employeeBox.findData(empId))
+        dlg.actionBox.setCurrentText("Pressing")
+        dlg.targetBox.setCurrentText(part)
+        dlg.calendar.setSelectedDate(toQDate(tomorrow))
+        dlg.quantityEdit.setText("10")
+        dlg.hoursEdit.setText("8")
+        before = snapshot()
+        dlg.mainLayout[-1][1].click()  # Create
+        if snapshot() != before:
+            errors.append(f"Create for tomorrow was saved: {snapshot()!r}")
+        dlg.close()
+
+        rec = stored(today - datetime.timedelta(days=3), 10)
+        before = snapshot()
+        dlg = ProductionEditWindow(w.productionTab, rec, w)
+        dlg.calendar.setSelectedDate(toQDate(tomorrow))
+        dlg.mainLayout[-1][0].click()  # Update
+        if snapshot() != before:
+            errors.append(f"Update to tomorrow was saved: {snapshot()!r}, want {before!r}")
+        dlg.close()
+
+        ahead = stored(yearAhead, 20)
+        before = snapshot()
+        dlg = ProductionEditWindow(w.productionTab, ahead, w)
+        dlg.quantityEdit.setText("21")
+        dlg.mainLayout[-1][0].click()  # Update
+        if snapshot() != before:
+            errors.append(f"Update keeping a date a year ahead was saved: {snapshot()!r}, want {before!r}")
+        dlg.close()
+        dlg = ProductionEditWindow(w.productionTab, ahead, w)
+        dlg.calendar.setSelectedDate(toQDate(today))
+        dlg.mainLayout[-1][0].click()  # Update
+        if (today, 20.0) not in snapshot() or any(d is not None and d > today for d, _q in snapshot()):
+            errors.append(f"control: the date corrected to today: stored {snapshot()!r}")
+        dlg.close()
+
+        for day, saved in ((tomorrow, False), (today - datetime.timedelta(days=1), True)):
+            before = snapshot()
+            dialog = ProductionBatchDialog(w.productionTab, w)
+            dialog.actionBox.setCurrentText("Pressing")
+            dialog.dateEdit.setDate(toQDate(day))
+            row = dialog.rows[0]
+            row.employeeBox.setCurrentIndex(row.employeeBox.findData(empId))
+            row.shiftBox.setCurrentText("2")
+            row.targetBox.setCurrentIndex(row.targetBox.findText(part))
+            row.quantityEdit.setText("5")
+            dialog._save()
+            if saved and (day, 5.0) not in snapshot():
+                errors.append(f"control: a batch for {day.isoformat()} was not saved: {snapshot()!r}")
+            if not saved and snapshot() != before:
+                errors.append(f"a batch for tomorrow was saved: {snapshot()!r}")
+            dialog.close()
+    finally:
+        if restore is not None:
+            restore()
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        if tmp is not None:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.unlink(tmp.name + suffix)
+                except OSError:
+                    pass
+    return errors
+
+
 def pto_dialog_roundtrip() -> list[str]:
     """Step 37b: PTOEditWindow new-and-edit roundtrips.
 

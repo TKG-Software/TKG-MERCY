@@ -36,7 +36,7 @@ from smoke.reports import (
 )
 from smoke.ui import (
     production_refresh_on_delete, inventory_edit_missing_date, production_batch_roundtrip,
-    production_edit_keeps_unlisted_target,
+    production_edit_keeps_unlisted_target, production_refuses_future_date,
     materials_impossible_loi_rejected,
     qsettings_reopen, file_dialog_dir_memory, close_confirm,
     load_refused_row_leaves_no_file_open,
@@ -107,6 +107,7 @@ CHECKS: list[tuple[str, Callable[[], list[str]]]] = [
     ("materials_impossible_loi_rejected", materials_impossible_loi_rejected),
     ("production_batch_roundtrip", production_batch_roundtrip),
     ("production_edit_keeps_unlisted_target", production_edit_keeps_unlisted_target),
+    ("production_refuses_future_date", production_refuses_future_date),
     ("production_quantity_validation", production_quantity_validation),
     ("qsettings_reopen", qsettings_reopen),
     ("file_dialog_dir_memory", file_dialog_dir_memory),
@@ -173,7 +174,7 @@ __all__ = [
     "production_employee_productivity_report", "production_trend_report",
     "product_employee_reports", "schedule_report", "order_status_report",
     "production_refresh_on_delete", "inventory_edit_missing_date", "production_batch_roundtrip",
-    "production_edit_keeps_unlisted_target",
+    "production_edit_keeps_unlisted_target", "production_refuses_future_date",
     "materials_impossible_loi_rejected",
     "qsettings_reopen", "file_dialog_dir_memory", "close_confirm",
     "load_refused_row_leaves_no_file_open",

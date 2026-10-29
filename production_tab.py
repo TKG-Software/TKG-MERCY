@@ -23,6 +23,18 @@ def _employeeLabel(emp):
     return f"{emp.lastName.upper()} {emp.firstName} ({emp.idNum})"
 
 
+def _afterToday(date: datetime.date) -> str | None:
+    # A record dated after today is missing from the reports of the day the
+    # work was done, since a report counts only the records inside its dates.
+    # The office's file of 10-5-26 held 112 (bugfix, 2026-10-29), most of them
+    # a year ahead. The message is the web version's (mercy-web, R16).
+    today = datetime.date.today()
+    if date > today:
+        return (f"This date is after today, {today.isoformat()}. "
+                f"Production is entered for today or a day before.")
+    return None
+
+
 class ProductionTab(QWidget):
     # Full-width tab listing shift-level production records with filter-by-employee +
     # date range. Reports live in Step 12, so this is edit/browse only.
@@ -421,6 +433,9 @@ class ProductionEditWindow(QWidget):
             errors.append(f"Employee {empId} no longer exists.")
 
         date = fromQDate(self.calendar.selectedDate())
+        refusal = _afterToday(date)
+        if refusal is not None:
+            errors.append(refusal)
 
         shiftText = self.shiftBox.currentText()
         try:
@@ -925,6 +940,10 @@ class ProductionBatchDialog(QWidget):
             return
 
         batchDate = fromQDate(self.dateEdit.date())
+        refusal = _afterToday(batchDate)
+        if refusal is not None:
+            errorMessage(self, [refusal])
+            return
         action = self.actionBox.currentText()
         if action not in PRODUCTION_ACTIONS:
             errorMessage(self, [f"Unknown action: {action!r}"])
