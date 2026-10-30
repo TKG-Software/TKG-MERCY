@@ -6,6 +6,15 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from records import Database
 
 
+class ReportCannotBeMade(Exception):
+    # A report that cannot be drawn whole. The message says why, in words for
+    # the office, and the caller shows it instead of opening the file. Until
+    # the bugfixes of 2026-10-30 the mixture report left rows out without a
+    # word; mercy-web's mixture report stops in the same words (CannotBeMade
+    # in its mercy/reports.py).
+    pass
+
+
 class PDFReportCore:
     # Owns the canvas + page geometry + the drawing primitives every domain
     # report builds on (drawTitle / drawTable / drawText / etc.). Composed into
@@ -69,25 +78,27 @@ class PDFReportCore:
         self.setFont(*oldFont)
 
     def drawClosingRows(self, rows: list[list[str]], pageTop, section: str,
-                        continued: str | None = None):
+                        continued: str | None = None,
+                        widths: list[float] | None = None):
         # Each of `rows` (a Total) after a table's last row, as a header-only
-        # table of its own so it comes out bold. One that does not fit at the
-        # foot of the page goes on the next page, under pageTop() and
-        # "<section> -- Continued", or `continued` for a report whose own
-        # continued pages are headed otherwise ("Sales (cont.)"); until the
-        # bugfixes of 2026-10-29 and 2026-10-30 it was left out without a
-        # word. The same as mercy-web's `closing_rows` (mercy/reports.py).
+        # table of its own so it comes out bold, in the table's `widths`. One
+        # that does not fit at the foot of the page goes on the next page,
+        # under pageTop() and "<section> -- Continued", or `continued` for a
+        # report whose own continued pages are headed otherwise ("Sales
+        # (cont.)"); until the bugfixes of 2026-10-29 and 2026-10-30 it was
+        # left out without a word. The same as mercy-web's `closing_rows`
+        # (mercy/reports.py).
         for row in rows:
             # drawTable counts data rows only, so a header-only table that did
             # not fit is told by the page's line not moving.
             before = self.lastLine
-            self.drawTable([], row)
+            self.drawTable([], row, widths)
             if self.lastLine == before:
                 self.nextPage()
                 pageTop()
                 self.drawSection(continued if continued is not None
                                  else f"{section} -- Continued")
-                self.drawTable([], row)
+                self.drawTable([], row, widths)
 
     def drawParagraph(self, text: str):
         maxWidth = self.right - self.left

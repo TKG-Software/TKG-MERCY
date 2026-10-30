@@ -1,6 +1,8 @@
 import datetime
 from typing import TYPE_CHECKING
 
+from .core import ReportCannotBeMade
+
 if TYPE_CHECKING:
     from records import Database
     from reportlab.pdfgen import canvas
@@ -44,10 +46,14 @@ class ProductReportsMixin:
             self.drawTitle("TKG Production Report")
             self.skipLines(2)
 
+            # The report has one page. A table cut short at its foot (a
+            # mixture of more materials than the page holds) stops the report
+            # with a message; until the bugfixes of 2026-10-30 its rows were
+            # left out without a word.
             self.drawSection(f"{mixName} Mixture Composition")
             headers = ["Material", "Weight"]
             data = [[f"{mix.materials[i]}", f"{mix.weights[i]}"] for i in range(len(mix.materials))]
-            self.drawTable(data, headers)
+            cutShort = self.drawTable(data, headers) < len(data)
 
             self.drawTable([], ["Total", f"{mix.getBatchWeight()}"])
 
@@ -65,7 +71,7 @@ class ProductReportsMixin:
                 ["MgO", f"{mix.getProp("MgO"):.4f}%"],
                 ["Other", f"{mix.getProp("otherChem"):.4f}%"]
             ]
-            self.drawTable(data)
+            cutShort |= self.drawTable(data) < len(data)
 
             self.drawSection(f"{mixName} Sizing Analysis")
             headers = ["+50", "-50+100", "-100+200", "-200+325", "-325"]
@@ -77,7 +83,10 @@ class ProductReportsMixin:
                 f"{mix.getProp("Sub325", False):.1f}%"
             ]]
 
-            self.drawTable(data, headers)
+            cutShort |= self.drawTable(data, headers) < len(data)
+            if cutShort:
+                raise ReportCannotBeMade(f"The mixture report has one page, and {mixName}'s "
+                                         f"{len(mix.materials)} materials do not fit on it.")
 
             self.nextPage()
             self.pdf.save()

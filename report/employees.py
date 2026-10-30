@@ -30,6 +30,7 @@ class EmployeeReportsMixin:
         def drawParagraph(self, text: str) -> None: ...
         def drawSignatureLine(self, label: str) -> None: ...
         def drawTable(self, data: list[list[str]], headers: list[str] | None = None, widths: list[float] | None = None) -> int: ...
+        def drawClosingRows(self, rows: list[list[str]], pageTop, section: str, continued: str | None = None, widths: list[float] | None = None) -> None: ...
 
     def employeePointsReport(self, id):
         if id in self.db.employees:
@@ -46,27 +47,29 @@ class EmployeeReportsMixin:
 
             ] for entry in points.currentPointsList(datetime.date.today())]
             olen = len(data)
+            subtitle = f"{employee.lastName.upper()} {employee.firstName} ({id})"
 
-            if len(data) == 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle(f"TKG Attendance Report ({datetime.date.today().isoformat()})")
-                self.drawSubtitle(f"{employee.lastName.upper()} {employee.firstName} ({id})")
+                self.drawSubtitle(subtitle)
                 self.skipLines(2)
+
+            if len(data) == 0:
+                pageTop()
 
                 self.drawSection(f"Attendance Details")
 
                 self.drawTable([], ["Total", f"{points.currentPoints(datetime.date.today())}", ""])
             while len(data) > 0:
-                self.setupPage()
-                self.drawTitle(f"TKG Attendance Report ({datetime.date.today().isoformat()})")
-                self.drawSubtitle(f"{employee.lastName.upper()} {employee.firstName} ({id})")
-                self.skipLines(2)
+                pageTop()
 
                 self.drawSection(f"Attendance Details{" -- Continued" if not len(data) == olen else ""}")
                 drawn = self.drawTable(data, headers)
 
                 if drawn == len(data):
-                    self.drawTable([], ["Total", f"{points.currentPoints(datetime.date.today())}", ""])
+                    self.drawClosingRows([["Total", f"{points.currentPoints(datetime.date.today())}", ""]],
+                                         pageTop, "Attendance Details")
 
                 data = data[drawn:]
                 self.nextPage()
@@ -108,10 +111,15 @@ class EmployeeReportsMixin:
             elif unusedType == "DROP":
                 status = "Dropped"
 
-            self.setupPage()
-            self.drawTitle(f"TKG PTO Report ({datetime.date.today().isoformat()})")
-            self.drawSubtitle(f"{employee.lastName.upper()} {employee.firstName} ({id})")
-            self.skipLines(2)
+            subtitle = f"{employee.lastName.upper()} {employee.firstName} ({id})"
+
+            def pageTop():
+                self.setupPage()
+                self.drawTitle(f"TKG PTO Report ({datetime.date.today().isoformat()})")
+                self.drawSubtitle(subtitle)
+                self.skipLines(2)
+
+            pageTop()
 
             self.drawSection(f"PTO Overview")
             self.drawText(f"PTO hours in {datetime.date.today().year}: {PTO.getAvailableHours(employee.anniversary, self.db.attendance[id], today)}{"" if (today - employee.anniversary).days >= PTO_ELIGIBILITY else f" (available {(employee.anniversary + datetime.timedelta(days=PTO_ELIGIBILITY)).isoformat()})"}")
@@ -130,16 +138,14 @@ class EmployeeReportsMixin:
                 self.drawTable([], ["Total Used", "", f"{PTO.getUsedHours(today.year)}"])
             while len(data) > 0:
                 if not len(data) == olen:
-                    self.setupPage()
-                    self.drawTitle(f"TKG PTO Report ({datetime.date.today().isoformat()})")
-                    self.drawSubtitle(f"{employee.lastName.upper()} {employee.firstName} ({id})")
-                    self.skipLines(2)
+                    pageTop()
 
                 self.drawSection(f"PTO Details{" -- Continued" if not len(data) == olen else ""}")
                 drawn = self.drawTable(data, headers)
 
                 if drawn == len(data):
-                    self.drawTable([], ["Total Used", "", f"{PTO.getUsedHours(today.year)}"])
+                    self.drawClosingRows([["Total Used", "", f"{PTO.getUsedHours(today.year)}"]],
+                                         pageTop, "PTO Details")
 
                 data = data[drawn:]
                 self.nextPage()
@@ -166,27 +172,29 @@ class EmployeeReportsMixin:
                 ])
             data.sort(key=lambda row: (row[0], row[1]))
             olen = len(data)
+            subtitle = f"{employee.lastName.upper()} {employee.firstName} ({id})"
 
-            if len(data) == 0:
+            def pageTop():
                 self.setupPage()
                 self.drawTitle(f"TKG Notes and Incidents Report ({today.isoformat()})")
-                self.drawSubtitle(f"{employee.lastName.upper()} {employee.firstName} ({id})")
+                self.drawSubtitle(subtitle)
                 self.skipLines(2)
+
+            if len(data) == 0:
+                pageTop()
 
                 self.drawSection(f"Notes & Incidents (Past Year)")
 
                 self.drawTable([], ["Total Notes", f"{olen}", ""], widths)
             while len(data) > 0:
-                self.setupPage()
-                self.drawTitle(f"TKG Notes and Incidents Report ({today.isoformat()})")
-                self.drawSubtitle(f"{employee.lastName.upper()} {employee.firstName} ({id})")
-                self.skipLines(2)
+                pageTop()
 
                 self.drawSection(f"Notes and Incidents (Past Year){" -- Continued" if not len(data) == olen else ""}")
                 drawn = self.drawTable(data, headers, widths)
 
                 if drawn == len(data):
-                    self.drawTable([], ["Total Notes", f"{olen}", ""], widths)
+                    self.drawClosingRows([["Total Notes", f"{olen}", ""]],
+                                         pageTop, "Notes and Incidents (Past Year)", widths=widths)
 
                 data = data[drawn:]
                 self.nextPage()
@@ -230,24 +238,25 @@ class EmployeeReportsMixin:
         ] for id in self.db.employees if self.db.employees[id].status]
         olen = len(data)
 
-        if len(data) == 0:
+        def pageTop():
             self.setupPage()
             self.drawTitle(f"TKG Active Employees Report ({datetime.date.today().isoformat()})")
             self.skipLines(2)
+
+        if len(data) == 0:
+            pageTop()
 
             self.drawSection(f"Details")
 
             self.drawTable([], ["Total Employees", f"{olen}"])
         while len(data) > 0:
-            self.setupPage()
-            self.drawTitle(f"TKG Active Employees Report ({datetime.date.today().isoformat()})")
-            self.skipLines(2)
+            pageTop()
 
             self.drawSection(f"Details{" -- Continued" if not len(data) == olen else ""}")
             drawn = self.drawTable(data, headers)
 
             if drawn == len(data):
-                self.drawTable([], ["Total Employees", f"{olen}"])
+                self.drawClosingRows([["Total Employees", f"{olen}"]], pageTop, "Details")
 
             data = data[drawn:]
             self.nextPage()

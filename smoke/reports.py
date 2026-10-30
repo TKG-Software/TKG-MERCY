@@ -420,6 +420,338 @@ def product_reports_keep_totals() -> list[str]:
     return errors
 
 
+def _drawingOf(db, make, pdfPaths, pageSize=None):
+    # Draws a report, recording each page's strings in the order drawn, each
+    # header-only table that was drawn (a total row) with the page it is on,
+    # and how many data rows each page holds. A cell's text wraps, so the
+    # totals and rows are read from drawTable.
+    from report import PDFReport
+
+    tmpPdf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmpPdf.close()
+    pdfPaths.append(tmpPdf.name)
+    report = (PDFReport(db, tmpPdf.name, pageSize=pageSize) if pageSize is not None
+              else PDFReport(db, tmpPdf.name))
+    pages: list[list[str]] = [[]]
+    closings: list[tuple[int, list[str]]] = []
+    rowsOn: dict[int, int] = {}
+    drawString = report.pdf.drawString
+    showPage = report.pdf.showPage
+    drawTable = report.drawTable
+
+    def recordString(x, y, text, *args, **kwargs):
+        pages[-1].append(text)
+        return drawString(x, y, text, *args, **kwargs)
+
+    def recordPage():
+        pages.append([])
+        return showPage()
+
+    def recordTable(data, headers=None, widths=None):
+        before = report.lastLine
+        drawn = drawTable(data, headers, widths)
+        if not data and headers is not None and report.lastLine != before:
+            closings.append((len(pages) - 1, headers))
+        rowsOn[len(pages) - 1] = rowsOn.get(len(pages) - 1, 0) + drawn
+        return drawn
+
+    report.pdf.drawString = recordString  # type: ignore[method-assign]
+    report.pdf.showPage = recordPage  # type: ignore[method-assign]
+    report.drawTable = recordTable  # type: ignore[method-assign]
+    make(report)
+    return pages, closings, rowsOn
+
+
+def employee_reports_keep_totals() -> list[str]:
+    """Bugfix (2026-10-30): a total row that does not fit at the foot of an
+    employee report's page goes on the next page.
+
+    The same fault as production_reports_keep_totals, in the attendance,
+    PTO, notes and active employees reports, where mercy-web found it when
+    it ported them (its R15e) and draws the row on the next page. Drawn
+    here, recording each page: each report for 1 to 40 rows. Each report's
+    Total must be drawn exactly once, and one on a page with no rows must
+    stand under "<section> -- Continued", as mercy-web draws it. The known
+    answer that the case is reached: some drawing of each report puts its
+    Total on a page of its own.
+    """
+    import datetime
+    from PySide6.QtWidgets import QApplication
+    from app import MainWindow
+    from records.employees import EmployeeNote, EmployeePoint, EmployeePTORange
+    import defaults
+    import fuzz_db as F
+
+    errors = []
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    pdfPaths: list[str] = []
+    w = None
+    try:
+        w = MainWindow()
+        if not w.fileManager.setFile(tmp.name):
+            errors.append("setFile returned False on fresh empty DB")
+            return errors
+        db = w.db
+        # The reports are for today, as the desktop draws them.
+        today = datetime.date.today()
+        rng = random.Random(1)
+        idNums = F.populateEmployees(db, rng, 40, today)
+        someEmp = idNums[0]
+        reason = next(r for r, v in defaults.POINT_VALS.items() if v > 0)
+
+        def checkTotal(label, drawing, total, section):
+            # True if the Total stands on a page of its own.
+            pages, closings, rowsOn = drawing
+            where = [page for page, headers in closings if headers[0] == total]
+            if len(where) != 1:
+                errors.append(f"{label}: {total!r} drawn {len(where)} times, want once")
+                return False
+            if rowsOn.get(where[0], 0) > 0:
+                return False
+            if f"{section} -- Continued" not in pages[where[0]]:
+                errors.append(f"{label}: {total!r} on a page of its own without "
+                              f"'{section} -- Continued'")
+            return True
+
+        def addPoint(n):
+            day = today - datetime.timedelta(days=n)
+            db.attendance[someEmp].points[day] = EmployeePoint(
+                someEmp, day, reason, defaults.POINT_VALS[reason])
+
+        def addPTO(n):
+            start = datetime.date(today.year, 1, 1) + datetime.timedelta(days=7 * (n - 1))
+            end = start + datetime.timedelta(days=1)
+            db.PTO[someEmp].PTO[(start, end)] = EmployeePTORange(someEmp, start, end, 8)
+
+        def addNote(n):
+            day = today - datetime.timedelta(days=n)
+            db.notes[someEmp].notes[(day, "09:00")] = EmployeeNote(
+                someEmp, day, "09:00", "A short note.")
+
+        def activeOf(n):
+            for i, idNum in enumerate(idNums):
+                db.employees[idNum].status = i < n
+
+        cases = [
+            ("attendance", addPoint, lambda p: p.employeePointsReport(someEmp),
+             "Total", "Attendance Details"),
+            ("PTO", addPTO, lambda p: p.employeePTOReport(someEmp),
+             "Total Used", "PTO Details"),
+            ("notes", addNote, lambda p: p.employeeNotesReport(someEmp),
+             "Total Notes", "Notes and Incidents (Past Year)"),
+            ("active employees", activeOf, lambda p: p.employeeActiveReport(),
+             "Total Employees", "Details"),
+        ]
+        for label, add, make, total, section in cases:
+            db.attendance[someEmp].points.clear()
+            db.PTO[someEmp].PTO.clear()
+            db.notes[someEmp].notes.clear()
+            anyOwnPage = False
+            for n in range(1, 41):
+                add(n)
+                drawing = _drawingOf(db, make, pdfPaths)
+                if checkTotal(f"{label} report of {n} rows", drawing, total, section):
+                    anyOwnPage = True
+            if not anyOwnPage:
+                errors.append(f"no {label} report of 1 to 40 rows put its Total on a page of "
+                              "its own: the case this check is for was not reached")
+    finally:
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.unlink(tmp.name + suffix)
+            except OSError:
+                pass
+        for p in pdfPaths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+    return errors
+
+
+def mixture_report_says_when_it_does_not_fit() -> list[str]:
+    """Bugfix (2026-10-30): a mixture report whose tables do not fit on its
+    one page stops with a message, and the Mixtures tab shows it.
+
+    The report has one page, and drew what fitted and left the rest out
+    without a word: the office's fullest mixture, of 8 materials, ends 2
+    points above the page's foot, and a ninth material left out the sieve
+    analysis. Drawn here for mixtures of 1 to 12 materials: one that fits
+    must hold every material, the Total, every oxide and the sieve row, and
+    one that does not must raise ReportCannotBeMade with mercy-web's words.
+    The known answer that the case is reached: 12 materials do not fit.
+    Then the tab's Report button on one that does not fit must show the
+    message and open no file.
+    """
+    from PySide6.QtWidgets import QApplication
+    from app import MainWindow
+    from records import Mixture
+    from report.core import ReportCannotBeMade
+    import fuzz_db as F
+    import mixtures_tab
+
+    errors = []
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    pdfPaths: list[str] = []
+    w = None
+    try:
+        w = MainWindow()
+        if not w.fileManager.setFile(tmp.name):
+            errors.append("setFile returned False on fresh empty DB")
+            return errors
+        db = w.db
+        rng = random.Random(1)
+        materialNames = F.populateMaterials(db, rng, 12)
+        refused = None
+        for n in range(1, 13):
+            name = f"Mix{n:02d}"
+            mix = Mixture(name)
+            for material in materialNames[:n]:
+                mix.add(material, 10)
+            db.addMixture(mix)
+            try:
+                pages, closings, rowsOn = _drawingOf(db, lambda p: p.mixReport(name), pdfPaths)
+            except ReportCannotBeMade as e:
+                want = (f"The mixture report has one page, and {name}'s {n} materials "
+                        "do not fit on it.")
+                if str(e) != want:
+                    errors.append(f"{name}: refused with {str(e)!r}, want {want!r}")
+                if refused is None:
+                    refused = name
+                continue
+            if refused is not None:
+                errors.append(f"{name} drawn, though {refused}, of fewer materials, was refused")
+            strings = [text for page in pages for text in page]
+            missing = [s for s in [*materialNames[:n], "Total", "SiO2", "Other", "+50", "-325"]
+                       if s not in strings]
+            if missing:
+                errors.append(f"{name}: drawn without {missing}")
+            if len(pages) != 2 or pages[1]:
+                errors.append(f"{name}: drawn on {len(pages) - 1} pages, want 1")
+        if refused is None:
+            errors.append("no mixture of 1 to 12 materials was refused: the case this check is "
+                          "for was not reached")
+            return errors
+
+        shown: list[list[str]] = []
+        opened: list[str] = []
+        realError, realStart = mixtures_tab.errorMessage, mixtures_tab.startfile
+        mixtures_tab.errorMessage = lambda parent, messages: shown.append(messages)
+        mixtures_tab.startfile = lambda path: opened.append(path)
+        try:
+            w.mixturesTab.selection = [refused]
+            w.mixturesTab.reportSelection()
+        finally:
+            mixtures_tab.errorMessage, mixtures_tab.startfile = realError, realStart
+        if len(shown) != 1 or "do not fit on it" not in shown[0][0]:
+            errors.append(f"the Report button on {refused} showed {shown}, want its message")
+        if opened:
+            errors.append(f"the Report button on {refused} opened {opened}, want no file")
+    finally:
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.unlink(tmp.name + suffix)
+            except OSError:
+                pass
+        for p in pdfPaths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+    return errors
+
+
+def order_status_report_keeps_total() -> list[str]:
+    """The order status report's Total is never left out (2026-10-30).
+
+    Its own guard moves the Total to a new page when fewer than two lines
+    are left, from the day the report was written; the bugfixes of
+    2026-10-29 and 2026-10-30 found every other report without one, so this
+    proves it. Drawn in landscape, as the window draws it, for 1 to 60
+    orders: the Total must be drawn exactly once, and one on a page with no
+    rows must stand under "Orders (cont.)". The known answer that the case
+    is reached: some drawing puts its Total on a page of its own.
+    """
+    import datetime
+    from PySide6.QtWidgets import QApplication
+    from reportlab.lib.pagesizes import letter, landscape
+    from app import MainWindow
+    import fuzz_db as F
+
+    errors = []
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    pdfPaths: list[str] = []
+    w = None
+    try:
+        w = MainWindow()
+        if not w.fileManager.setFile(tmp.name):
+            errors.append("setFile returned False on fresh empty DB")
+            return errors
+        db = w.db
+        rng = random.Random(1)
+        today = datetime.date(2026, 6, 25)
+        materialNames = F.populateMaterials(db, rng, 4)
+        mixtureNames = F.populateMixtures(db, rng, 1, materialNames)
+        F.populatePackaging(db, rng, 5)
+        packagingByKind = {k: [] for k in F.PACKAGING_POOL}
+        for name in db.packaging:
+            packagingByKind[db.packaging[name].kind].append(name)
+        partNames = F.populateParts(db, rng, 3, mixtureNames, packagingByKind)
+        clientNames = F.populateClients(db, rng, 3)
+        F.populateOrders(db, rng, clientNames, partNames, 60, today)
+        orders = dict(db.orders)
+        if len(orders) < 50:
+            errors.append(f"expected about 60 fuzzed orders, got {len(orders)}")
+            return errors
+        lo, hi = datetime.date(2000, 1, 1), datetime.date(2100, 1, 1)
+        anyOwnPage = False
+        for n in range(1, len(orders) + 1):
+            db.orders.clear()
+            db.orders.update(list(orders.items())[:n])
+            pages, closings, rowsOn = _drawingOf(
+                db, lambda p: p.orderStatusReport(lo, hi), pdfPaths,
+                pageSize=landscape(letter))
+            where = [page for page, headers in closings if headers[0] == "Total"]
+            if len(where) != 1:
+                errors.append(f"{n} orders: Total drawn {len(where)} times, want once")
+                continue
+            if rowsOn.get(where[0], 0) == 0:
+                anyOwnPage = True
+                if "Orders (cont.)" not in pages[where[0]]:
+                    errors.append(f"{n} orders: Total on a page of its own without "
+                                  "'Orders (cont.)'")
+        if not anyOwnPage:
+            errors.append("no report of 1 to 60 orders put its Total on a page of its own: "
+                          "the case this check is for was not reached")
+    finally:
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.unlink(tmp.name + suffix)
+            except OSError:
+                pass
+        for p in pdfPaths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+    return errors
+
+
 def production_productivity_report() -> list[str]:
     """Step 18: productivity report covers all four layout cases + Tool Change.
 

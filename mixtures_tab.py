@@ -7,7 +7,9 @@ from error import errorMessage
 from utils import getComboBox, widgetFromList, checkInput, startfile, tempReportPath, centerOnScreen
 
 from report import PDFReport
+from report.core import ReportCannotBeMade
 import logging
+import os
 
 class MixturesTab(QWidget):
     def __init__(self, mainApp: MainWindow) -> None:
@@ -106,7 +108,12 @@ class MixturesTab(QWidget):
         for mixture in self.selection:
             path = tempReportPath(f"mixture-{mixture}")
             pdf = PDFReport(self.mainApp.db, path)
-            pdf.mixReport(mixture)
+            try:
+                pdf.mixReport(mixture)
+            except ReportCannotBeMade as e:
+                os.remove(path)
+                errorMessage(self.mainApp, [str(e)])
+                continue
             startfile(path)
     
     def refreshTable(self):
