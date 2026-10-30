@@ -23,6 +23,7 @@ class ProductReportsMixin:
         def drawTitle(self, text: str) -> None: ...
         def drawSection(self, text: str) -> None: ...
         def drawTable(self, data: list[list[str]], headers: list[str] | None = None, widths: list[float] | None = None) -> int: ...
+        def drawClosingRows(self, rows: list[list[str]], pageTop, section: str, continued: str | None = None) -> None: ...
 
     def globalsReport(self):
         globalKeys = self.db.globals.getGlobals()
@@ -96,17 +97,21 @@ class ProductReportsMixin:
             totalLab += part.sales * part.getGrossLaborCost()
             totalMatl += part.sales * part.getGrossMatlCost()
             total += part.sales * part.getManufacturingCost()
-        while len(data) > 0:
+
+        def pageTop():
             self.setupPage()
             self.drawTitle("TKG Production Report")
             self.skipLines(2)
 
+        while len(data) > 0:
+            pageTop()
             self.drawSection("Cost Analysis Report" if len(data) == len(parts) else "Sales (cont.)")
             headers = ["Part", "Man. Cost", "Sales", "Gross Lab.","Gross Mat.", "COGS"]
             drawn = self.drawTable(data, headers)
 
             if drawn == len(data):
-                self.drawTable([], ["Total", "---", f"{sales}", f"${totalLab:.2f}", f"${totalMatl:.2f}", f"${total:.2f}"])
+                self.drawClosingRows([["Total", "---", f"{sales}", f"${totalLab:.2f}", f"${totalMatl:.2f}", f"${total:.2f}"]],
+                                     pageTop, "Cost Analysis Report", "Sales (cont.)")
 
             data = data[drawn:]
             self.nextPage()
@@ -203,10 +208,13 @@ class ProductReportsMixin:
             ["Completed Parts", f"${currValPartCompleted_currDate:.2f}", f"${origValPartCompleted_prevDate:.2f}" if prevDate is not None else "N/A", f"${currValPartCompleted_currDate - origValPartCompleted_prevDate:.2f}"]
         ]
         headersDelta = ["Category", "Current Value", f"{prevDate.isoformat() if prevDate is not None else "Prior"} Value", "Change"]
-        self.setupPage()
-        self.drawTitle(f"TKG Inventory Report for {currDate.isoformat()}")
-        self.skipLines(2)
 
+        def pageTop():
+            self.setupPage()
+            self.drawTitle(f"TKG Inventory Report for {currDate.isoformat()}")
+            self.skipLines(2)
+
+        pageTop()
         self.drawSection("Inventory Overview")
         self.drawTable(dataDeltas, headersDelta)
         self.drawTable([], [
@@ -220,16 +228,14 @@ class ProductReportsMixin:
 
         olen = len(dataMatl)
         while len(dataMatl) > 0:
-            self.setupPage()
-            self.drawTitle(f"TKG Inventory Report for {currDate.isoformat()}")
-            self.skipLines(2)
-
+            pageTop()
             self.drawSection("Materials Inventory" if len(dataMatl) == olen else "Materials Inventory (cont.)")
             headers = ["Material", "Current Cost", "Original Cost", "Amount", "Value"]
             drawn = self.drawTable(dataMatl, headers)
 
             if drawn == len(dataMatl):
-                self.drawTable([], ["Total", f"${currValMatl_currDate:.4f}", f"${origValMatl_currDate:.4f}", "---", "---"])
+                self.drawClosingRows([["Total", f"${currValMatl_currDate:.4f}", f"${origValMatl_currDate:.4f}", "---", "---"]],
+                                     pageTop, "Materials Inventory", "Materials Inventory (cont.)")
 
             dataMatl = dataMatl[drawn:]
             self.nextPage()
@@ -238,16 +244,14 @@ class ProductReportsMixin:
 
         olen = len(dataPartWIP)
         while len(dataPartWIP) > 0:
-            self.setupPage()
-            self.drawTitle(f"TKG Inventory Report for {currDate.isoformat()}")
-            self.skipLines(2)
-
+            pageTop()
             self.drawSection("WIP Parts Inventory" if len(dataPartWIP) == olen else "WIP Parts Inventory (cont.)")
             headers = ["Part", "Curr. Cost", "Orig. Cost", "Pressed", "Finished", "Fired", "Value"]
             drawn = self.drawTable(dataPartWIP, headers)
 
             if drawn == len(dataPartWIP):
-                self.drawTable([], ["Total", f"${currValPartWIP_currDate:.4f}", f"${origValPartWIP_currDate:.4f}", "---", "---", "---", "---"])
+                self.drawClosingRows([["Total", f"${currValPartWIP_currDate:.4f}", f"${origValPartWIP_currDate:.4f}", "---", "---", "---", "---"]],
+                                     pageTop, "WIP Parts Inventory", "WIP Parts Inventory (cont.)")
 
             dataPartWIP = dataPartWIP[drawn:]
             self.nextPage()
@@ -256,16 +260,14 @@ class ProductReportsMixin:
 
         olen = len(dataPartCompleted)
         while len(dataPartCompleted) > 0:
-            self.setupPage()
-            self.drawTitle(f"TKG Inventory Report for {currDate.isoformat()}")
-            self.skipLines(2)
-
+            pageTop()
             self.drawSection("Completed Parts Inventory" if len(dataPartCompleted) == olen else "Completed Parts Inventory (cont.)")
             headers = ["Part", "Curr. Cost", "Orig. Cost", "Completed", "Value"]
             drawn = self.drawTable(dataPartCompleted, headers)
 
             if drawn == len(dataPartCompleted):
-                self.drawTable([], ["Total", f"${currValPartCompleted_currDate:.4f}", f"${origValPartCompleted_currDate:.4f}", "---", "---"])
+                self.drawClosingRows([["Total", f"${currValPartCompleted_currDate:.4f}", f"${origValPartCompleted_currDate:.4f}", "---", "---"]],
+                                     pageTop, "Completed Parts Inventory", "Completed Parts Inventory (cont.)")
 
             dataPartCompleted = dataPartCompleted[drawn:]
             self.nextPage()

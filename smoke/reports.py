@@ -254,6 +254,172 @@ def production_reports_keep_totals() -> list[str]:
     return errors
 
 
+def product_reports_keep_totals() -> list[str]:
+    """Bugfix (2026-10-30): a total row that does not fit at the foot of the
+    sales or inventory report's page goes on the next page.
+
+    The same fault as production_reports_keep_totals: 3 of the 10 inventory
+    reports the web port drew from the office's file of 10-5-26 left out
+    the Total of a parts section. Drawn here, recording each page's strings:
+    the sales report for 1 to 40 parts with sales, and an inventory of 1 to
+    40 materials, then of 1 to 40 parts in progress, then of 1 to 40
+    completed parts. Each section's Total must be drawn exactly once (an
+    inventory's Overview has a Total of its own), and one on a page with no
+    rows of its table must stand under the section's "(cont.)" heading. The
+    known answer that the case is reached: some drawing of each section
+    puts its Total on a page of its own.
+    """
+    from PySide6.QtWidgets import QApplication
+    from app import MainWindow
+    from records import Inventory, MaterialInventoryRecord, Part, PartInventoryRecord
+    from report import PDFReport
+    import fuzz_db as F
+
+    errors = []
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    pdfPaths: list[str] = []
+    w = None
+    try:
+        w = MainWindow()
+        if not w.fileManager.setFile(tmp.name):
+            errors.append("setFile returned False on fresh empty DB")
+            return errors
+        db = w.db
+
+        # A mixture and packaging from fuzz_db, then parts of one shape with
+        # names that sort as they are listed.
+        rng = random.Random(1)
+        materialNames = F.populateMaterials(db, rng, 4)
+        mixtureNames = F.populateMixtures(db, rng, 1, materialNames)
+        F.populatePackaging(db, rng, 5)
+        packagingByKind = {k: [] for k in F.PACKAGING_POOL}
+        for name in db.packaging:
+            packagingByKind[db.packaging[name].kind].append(name)
+        partNames = [f"Part{n:02d}" for n in range(1, 41)]
+        for name in partNames:
+            part = Part(name)
+            part.setProduction(weight=1.0, mix=mixtureNames[0], pressing=10.0, turning=10.0,
+                               fireScrap=0.01, price=5.0)
+            part.setPackaging(box=packagingByKind["box"][0], piecesPerBox=10,
+                              pallet=packagingByKind["pallet"][0], boxesPerPallet=20,
+                              pad=[], padsPerBox=[], misc=[])
+            part.sales = 0
+            db.addPart(part)
+
+        def pagesOf(make):
+            # Each page's strings, in the order drawn, and each header-only
+            # table that was drawn (a total row), with the page it is on.
+            tmpPdf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            tmpPdf.close()
+            pdfPaths.append(tmpPdf.name)
+            report = PDFReport(db, tmpPdf.name)
+            pages: list[list[str]] = [[]]
+            closings: list[tuple[int, list[str]]] = []
+            drawString = report.pdf.drawString
+            showPage = report.pdf.showPage
+            drawTable = report.drawTable
+
+            def recordString(x, y, text, *args, **kwargs):
+                pages[-1].append(text)
+                return drawString(x, y, text, *args, **kwargs)
+
+            def recordPage():
+                pages.append([])
+                return showPage()
+
+            def recordTable(data, headers=None, widths=None):
+                before = report.lastLine
+                drawn = drawTable(data, headers, widths)
+                if not data and headers is not None and report.lastLine != before:
+                    closings.append((len(pages) - 1, headers))
+                return drawn
+
+            report.pdf.drawString = recordString  # type: ignore[method-assign]
+            report.pdf.showPage = recordPage  # type: ignore[method-assign]
+            report.drawTable = recordTable  # type: ignore[method-assign]
+            make(report)
+            return pages, closings
+
+        def checkTotal(label, drawing, totals, heading, rowMarks):
+            # `totals`: how many Total rows the drawing must hold; the last is
+            # the section's. True if it stands on a page of its own.
+            pages, closings = drawing
+            drawnTotals = [(i, headers) for i, headers in closings if headers[0] == "Total"]
+            if len(drawnTotals) != totals:
+                errors.append(f"{label}: {len(drawnTotals)} Total rows drawn, want {totals}")
+                return False
+            page = pages[drawnTotals[-1][0]]
+            if any(mark in text for text in page for mark in rowMarks):
+                return False
+            if heading not in page:
+                errors.append(f"{label}: its Total on a page of its own without {heading!r}")
+            return True
+
+        anyOwnPage = False
+        for n, name in enumerate(partNames, start=1):
+            db.parts[name].sales = 100
+            pages = pagesOf(lambda p: p.salesReport())
+            if checkTotal(f"sales report of {n} parts", pages, 1, "Sales (cont.)",
+                          partNames[:n]):
+                anyOwnPage = True
+        if not anyOwnPage:
+            errors.append("no sales report of 1 to 40 parts put its Total on a page of its own: "
+                          "the case this check is for was not reached")
+
+        day = datetime_date(2026, 4, 4)
+        sections = [
+            ("materials", "Materials Inventory (cont.)", (1, 0, 0, 0)),
+            ("parts in progress", "WIP Parts Inventory (cont.)", (1, 1, 1, 0)),
+            ("completed parts", "Completed Parts Inventory (cont.)", (0, 0, 0, 1)),
+        ]
+        for label, heading, amounts in sections:
+            inventory = Inventory(day)
+            db.inventories[day] = inventory
+            anyOwnPage = False
+            names = []
+            for n in range(1, 41):
+                if label == "materials":
+                    name = f"Mat{n:02d}"
+                    record = MaterialInventoryRecord()
+                    record.setName(name)
+                    record.setDate(day)
+                    record.setInventory(1.0, 10.0)
+                    inventory.addMaterialRecord(record)
+                else:
+                    name = partNames[n - 1]
+                    record = PartInventoryRecord()
+                    record.setName(name)
+                    record.setDate(day)
+                    record.setInventory(1.0, *amounts)
+                    inventory.addPartRecord(record)
+                names.append(name)
+                pages = pagesOf(lambda p: p.inventoryReport(day))
+                # The Overview's Total, then the section's.
+                if checkTotal(f"inventory of {n} {label}", pages, 2, heading, names):
+                    anyOwnPage = True
+            if not anyOwnPage:
+                errors.append(f"no inventory of 1 to 40 {label} put its Total on a page of its "
+                              "own: the case this check is for was not reached")
+            del db.inventories[day]
+    finally:
+        if w is not None and w.fileManager.dbFile is not None:
+            w.fileManager.dbFile.close()
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.unlink(tmp.name + suffix)
+            except OSError:
+                pass
+        for p in pdfPaths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+    return errors
+
+
 def production_productivity_report() -> list[str]:
     """Step 18: productivity report covers all four layout cases + Tool Change.
 

@@ -32,7 +32,8 @@ from smoke.migrations import (
 from smoke.reports import (
     production_report, production_reports_keep_totals, production_productivity_report,
     production_employee_productivity_report, production_trend_report,
-    product_employee_reports, schedule_report, order_status_report,
+    product_employee_reports, product_reports_keep_totals, schedule_report,
+    order_status_report,
 )
 from smoke.ui import (
     production_refresh_on_delete, inventory_edit_missing_date, production_batch_roundtrip,
@@ -101,6 +102,7 @@ CHECKS: list[tuple[str, Callable[[], list[str]]]] = [
     ("production_employee_productivity_report", production_employee_productivity_report),
     ("production_trend_report", production_trend_report),
     ("product_employee_reports", product_employee_reports),
+    ("product_reports_keep_totals", product_reports_keep_totals),
     ("schedule_report", schedule_report),
     ("order_status_report", order_status_report),
     ("production_refresh_on_delete", production_refresh_on_delete),
@@ -173,7 +175,8 @@ __all__ = [
     "mercy_v4_to_v14_end_to_end", "scheduling_save_rollback",
     "production_report", "production_reports_keep_totals", "production_productivity_report",
     "production_employee_productivity_report", "production_trend_report",
-    "product_employee_reports", "schedule_report", "order_status_report",
+    "product_employee_reports", "product_reports_keep_totals", "schedule_report",
+    "order_status_report",
     "production_refresh_on_delete", "inventory_edit_missing_date", "production_batch_roundtrip",
     "production_edit_keeps_unlisted_target", "production_refuses_future_date",
     "materials_impossible_loi_rejected",
