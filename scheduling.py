@@ -564,6 +564,13 @@ def schedule(db: Database, today: datetime.date | None = None,
             partOrder.append(st.part)
         ordersByPart[st.part].append(st)
     partRank = {p: i for i, p in enumerate(partOrder)}
+    urgency = {id(st): i for i, st in enumerate(active)}
+
+    def rankNow(part: str | None) -> int:
+        """A part's urgency now: the EDF place of its most urgent order still to press,
+        or past every order when it has none (an idle die)."""
+        return min((urgency[id(s)] for s in ordersByPart.get(part or "", [])
+                    if s.remaining > EPS), default=len(active))
 
     # Step 80 die-placement state, threaded across the whole walk: mount[press] is the
     # part whose die is physically on that press right now, seeded from Press.currentPart.
@@ -611,8 +618,11 @@ def schedule(db: Database, today: datetime.date | None = None,
         budgetLeft: dict[str, float] = {}    # opened press -> press-hours remaining today
         opened = 0                           # count of presses opened -> indexes `budgets`
 
-        queue = [p for p in partOrder
-                 if any(s.remaining > EPS for s in ordersByPart[p])]
+        # Rank the parts on each shift-day by their most urgent order still to press, so
+        # a part whose urgent order is done drops to its next order's place (order by
+        # order, as the team approved; Rich, 2026-11-08).
+        queue = sorted((p for p in partOrder
+                        if any(s.remaining > EPS for s in ordersByPart[p])), key=rankNow)
         for part in queue:
             partRem = sum(s.remaining for s in ordersByPart[part] if s.remaining > EPS)
             if partRem <= EPS:
@@ -633,7 +643,7 @@ def schedule(db: Database, today: datetime.date | None = None,
                 press = min(candidates, key=lambda pr: (
                     0 if mount[pr] is None else 1,
                     0 if _idleDie(pr) else 1,
-                    -partRank.get(mount[pr] or "", len(partOrder)),
+                    -rankNow(mount[pr]),
                     -_prefScore(db, part, pr),
                     pr))
                 source = "open"

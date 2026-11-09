@@ -318,7 +318,10 @@ def scheduling_scheduler() -> list[str]:
     tiebreak, preference beating the tiebreak), and the Step 80 seed — currentPart steers
     the press over part preference (L), evicting a seeded idle die costs a die change (M),
     within-run stickiness / no gratuitous hop across shift-days (N), and urgency taking an
-    empty press rather than evicting an incumbent die (O) — plus determinism."""
+    empty press rather than evicting an incumbent die (O); whole-piece quantities (P); and
+    order by order (2026-11-09): a part ranks each shift-day by its most urgent order still
+    to press (Q), and the die moved off is the one whose next order is furthest off (R) —
+    plus determinism."""
     from records.database import emptyDB
     from records.scheduling import Press, Presser
     from records.sales import Client, Order
@@ -591,6 +594,47 @@ def scheduling_scheduler() -> list[str]:
     _expect(errors, "P rows sum EXACTLY to requiredPressed (zero drift)",
             sum(quantities), S.requiredPressed(dbP, "P", 5000))
     _expect(errors, "P no flags", rP.flags, [])
+
+    # --- Q: ORDER BY ORDER (2026-11-09, Rich). X has an urgent order (O1, Tuesday) and a
+    #        far one (O3, the next Friday); Y's one order (O2) is due Wednesday. One press,
+    #        one presser. Monday X presses O1 and, in the same shift, 4h of O3. From Tuesday
+    #        X ranks by O3, behind Y, so Y presses Tuesday and O2 is on time; X finishes O3
+    #        on Wednesday and Thursday. Ranked once at the start, by O1, X kept the press
+    #        to Wednesday and O2 was a day late.
+    thursday = monday + 3 * day
+    dbQ = build(("P1",), ((10, 8.0),),
+                [("X", 10.0, 0.0), ("Y", 10.0, 0.0)],
+                [("O1", "X", 40, 100.0, tuesday), ("O2", "Y", 80, 100.0, wednesday),
+                 ("O3", "X", 200, 100.0, friday + 7 * day)])
+    rQ = S.schedule(dbQ, monday, cfg)
+    _expect(errors, "Q order by order: Y's Wednesday order before X's far one", _rowTuples(rQ), [
+        (monday, 1, "P1", "X", 80.0, 8.0),
+        (tuesday, 1, "P1", "Y", 80.0, 8.0),
+        (wednesday, 1, "P1", "X", 80.0, 8.0),
+        (thursday, 1, "P1", "X", 80.0, 8.0),
+    ])
+    _expect(errors, "Q no flags", rQ.flags, [])
+
+    # --- R: THE DIE MOVED OFF IS THE ONE NEEDED LAST (2026-11-09). One presser, two
+    #        presses: A's die on PA, B's on PB. Monday A presses its urgent O1 and 4h of its
+    #        far O4. Tuesday C (O3, Wednesday) needs a press, and both presses hold dies with
+    #        work waiting: A's next order is now the furthest off, so C goes onto PA and B's
+    #        die stays on PB for O2 on Wednesday. Ranked by O1, A's die counted as the most
+    #        urgent and C went onto PB, moving off the die needed next.
+    dbR = build(("PA", "PB"), ((10, 8.0),),
+                [("A", 10.0, 0.0), ("B", 10.0, 0.0), ("C", 10.0, 0.0)],
+                [("O1", "A", 40, 100.0, monday), ("O3", "C", 80, 100.0, wednesday),
+                 ("O2", "B", 80, 100.0, thursday), ("O4", "A", 120, 100.0, friday + 14 * day)])
+    dbR.presses["PA"].currentPart = "A"
+    dbR.presses["PB"].currentPart = "B"
+    rR = S.schedule(dbR, monday, cfg)
+    _expect(errors, "R C displaces the die needed last; B keeps PB", _rowTuples(rR), [
+        (monday, 1, "PA", "A", 80.0, 8.0),
+        (tuesday, 1, "PA", "C", 80.0, 8.0),
+        (wednesday, 1, "PB", "B", 80.0, 8.0),
+        (thursday, 1, "PA", "A", 80.0, 8.0),
+    ])
+    _expect(errors, "R no flags", rR.flags, [])
 
     # --- Determinism: identical (db, today, config) -> identical result.
     _expect(errors, "deterministic", S.schedule(dbA, monday, cfg), rA)
