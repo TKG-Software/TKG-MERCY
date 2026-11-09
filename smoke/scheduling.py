@@ -636,6 +636,37 @@ def scheduling_scheduler() -> list[str]:
     ])
     _expect(errors, "R no flags", rR.flags, [])
 
+    # --- S: A PRESSER IS NAMED ONLY FOR A PRESS THEIR HOURS COVER (2026-11-09). Two
+    #        pressers, 8 and 4 hours, one press, which the 4-hour presser prefers. One
+    #        press makes one lane, on the longer hours, so P presses 8h: the 8-hour
+    #        presser is named, not the preferred one. When P needs only 3h the 4-hour
+    #        presser fits and preference names them (asserted for contrast).
+    dbS = build(("P1",), ((10, 8.0), (11, 4.0)),
+                [("P", 10.0, 0.0)], [("O1", "P", 80, 100.0, friday)],
+                presserPrefs={(11, "P1"): 5})
+    rS = S.schedule(dbS, monday, cfg)
+    _expect(errors, "S the 8h press gets the 8-hour presser",
+            [(r.date, r.press, r.hours, r.presser) for r in rS.rows], [(monday, "P1", 8.0, 10)])
+    dbSc = build(("P1",), ((10, 8.0), (11, 4.0)),
+                 [("P", 10.0, 0.0)], [("O1", "P", 30, 100.0, friday)],
+                 presserPrefs={(11, "P1"): 5})
+    rSc = S.schedule(dbSc, monday, cfg)
+    _expect(errors, "S contrast: a 3h press gets the preferred 4-hour presser",
+            [(r.date, r.press, r.hours, r.presser) for r in rSc.rows], [(monday, "P1", 3.0, 11)])
+
+    # --- T: A FIT FOR EVERY PRESS, NOT JUST THE FIRST (2026-11-09). Pressers of 8 and 4
+    #        hours on two presses: X runs 8h on PA, Y 3h on PB. The 8-hour presser prefers
+    #        PB, and their hours cover it, but taking it would leave PA's 8 hours to the
+    #        4-hour presser; so they stand at PA and the 4-hour presser at PB.
+    dbT = build(("PA", "PB"), ((10, 8.0), (12, 4.0)),
+                [("X", 10.0, 0.0), ("Y", 10.0, 0.0)],
+                [("O1", "X", 80, 100.0, thursday), ("O2", "Y", 30, 100.0, friday)],
+                partPrefs={("X", "PA"): 5, ("Y", "PB"): 5}, presserPrefs={(10, "PB"): 5})
+    rT = S.schedule(dbT, monday, cfg)
+    _expect(errors, "T every press staffed within its presser's hours",
+            [(r.press, r.part, r.hours, r.presser) for r in rT.rows],
+            [("PA", "X", 8.0, 10), ("PB", "Y", 3.0, 12)])
+
     # --- Determinism: identical (db, today, config) -> identical result.
     _expect(errors, "deterministic", S.schedule(dbA, monday, cfg), rA)
     return errors

@@ -452,7 +452,8 @@ def _presserPrefScore(db: Database, employeeId: int, press: str, neutral: int) -
 
 
 def _assignPressers(db: Database, shift: int, d: datetime.date,
-                    rows: list[ScheduleRow], config: ScheduleConfig) -> list[ScheduleRow]:
+                    rows: list[ScheduleRow], config: ScheduleConfig,
+                    pressHours: dict[str, float] | None = None) -> list[ScheduleRow]:
     """Step 66 (§13.44): staff the present pressers onto the running presses of a
     shift-day — a pass secondary to the press/part decision the Step 80 walk
     (`_placeShiftDay`) already made, run once per (date, shift) over that shift-day's rows.
@@ -466,13 +467,31 @@ def _assignPressers(db: Database, shift: int, d: datetime.date,
     unassigned that shift (the rarer direction — normally pressers <= presses, so
     nobody is starved). This never changes whether or what runs, only who stands
     where: no row is added, dropped, or re-quantified — only its `presser` field
-    is filled in (the rows are frozen, so it rebuilds them via `replace`)."""
+    is filled in (the rows are frozen, so it rebuilds them via `replace`).
+
+    A presser stands only at a press whose `pressHours` that shift-day (its pressing
+    and die changes, as the walk planned them) fit in the presser's hoursPerShift, and
+    a pair is taken only while every press left can still be staffed so (2026-11-09:
+    mercy-web's R28 found 4-hour pressers named for 8-hour presses). The walk plans
+    each press on one presser's hours (`laneBudgets`), so a fit always exists; when
+    the hours bind nowhere, the result is the plain greedy one above. A press
+    missing from `pressHours` needs no hours."""
     if config.presserAssignment != PRESSER_ASSIGNMENT_PREFERENCE:
         raise NotImplementedError(
             f"presserAssignment={config.presserAssignment!r} is reserved but not "
             "implemented; only 'preference' is available in v1.")
     runningPresses = sorted({r.press for r in rows})
-    presserIds = sorted(p.employeeId for p in pressersPresent(db, shift, d))
+    hoursOf = {p.employeeId: p.hoursPerShift for p in pressersPresent(db, shift, d)}
+    presserIds = sorted(hoursOf)
+    need = {press: (pressHours or {}).get(press, 0.0) for press in runningPresses}
+
+    def canStaff(presses: list[str], pressers: list[int]) -> bool:
+        # Every press can get a presser of at least its hours iff, longest first, the
+        # k-th press needs no more than the k-th presser has (Hall's condition for a
+        # fit by hours alone).
+        needs = sorted((need[pr] for pr in presses), reverse=True)
+        hours = sorted((hoursOf[e] for e in pressers), reverse=True)
+        return len(hours) >= len(needs) and all(h >= n - EPS for h, n in zip(hours, needs))
 
     # All (press, presser) pairs, best score first; ties broken deterministically
     # by press name then employeeId so a re-run staffs the same crew identically
@@ -486,6 +505,12 @@ def _assignPressers(db: Database, shift: int, d: datetime.date,
     for press, empId in pairs:
         if press in pressToPresser or empId in takenPressers:
             continue
+        if hoursOf[empId] < need[press] - EPS:
+            continue                      # the press runs longer than this presser's shift
+        restPresses = [pr for pr in runningPresses if pr not in pressToPresser and pr != press]
+        restPressers = [e for e in presserIds if e not in takenPressers and e != empId]
+        if not canStaff(restPresses, restPressers):
+            continue                      # taking this pair would leave a press unstaffable
         pressToPresser[press] = empId
         takenPressers.add(empId)
 
@@ -594,6 +619,9 @@ def schedule(db: Database, today: datetime.date | None = None,
         return not any(s.remaining > EPS for s in ordersByPart.get(resident, []))
 
     rowsByShiftDay: dict[tuple[datetime.date, int], list[ScheduleRow]] = {}
+    # Each running press's hours on a shift-day, its die changes included: the hours its
+    # presser must have (2026-11-09, `_assignPressers`).
+    pressHoursByShiftDay: dict[tuple[datetime.date, int], dict[str, float]] = {}
 
     # Step 82 drift-free quantities: press-hours pressed so far per part, across the whole
     # walk. A row's whole-piece quantity is the difference between the rounded running
@@ -616,6 +644,7 @@ def schedule(db: Database, today: datetime.date | None = None,
         opened press's press-hours left today; a die change is charged out of that budget."""
         lanes = len(budgets)                 # presses we can staff this shift-day (Step 78)
         budgetLeft: dict[str, float] = {}    # opened press -> press-hours remaining today
+        laneOf: dict[str, float] = {}        # opened press -> the lane budget it opened on
         opened = 0                           # count of presses opened -> indexes `budgets`
 
         # Rank the parts on each shift-day by their most urgent order still to press, so
@@ -668,6 +697,7 @@ def schedule(db: Database, today: datetime.date | None = None,
                     continue          # a die change ate the whole fresh slot — defer the part
                 _mountOn(press, part)
                 budgetLeft[press] = avail
+                laneOf[press] = budgets[opened]
                 opened += 1
             else:  # share
                 _mountOn(press, part)
@@ -695,6 +725,10 @@ def schedule(db: Database, today: datetime.date | None = None,
             rowsByShiftDay.setdefault((d, shift), []).append(
                 ScheduleRow(d, shift, press, part, quantity, take))
 
+        if budgetLeft:
+            pressHoursByShiftDay[(d, shift)] = {
+                pr: laneOf[pr] - left for pr, left in budgetLeft.items()}
+
     for offset in range(config.maxHorizonDays + 1):
         if all(st.remaining <= EPS for st in active):
             break
@@ -716,7 +750,8 @@ def schedule(db: Database, today: datetime.date | None = None,
     rows: list[ScheduleRow] = []
     for key in rowsByShiftDay:
         d, shift = key
-        rows.extend(_assignPressers(db, shift, d, rowsByShiftDay[key], config))
+        rows.extend(_assignPressers(db, shift, d, rowsByShiftDay[key], config,
+                                    pressHoursByShiftDay.get(key)))
 
     for st in active:
         if st.remaining > EPS:
